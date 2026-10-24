@@ -57,6 +57,18 @@ if(METAL)
   enable_language(OBJCXX)
   add_compile_definitions(METAL)
 endif()
+
+# Apple clang does not ship gfortran's ISO_Fortran_binding.h; copy only that header from the
+# Fortran compiler (adding gcc's include directory would shadow clang's own headers)
+if(APPLE AND CMAKE_Fortran_COMPILER_ID STREQUAL "GNU" AND NOT CMAKE_C_COMPILER_ID STREQUAL "GNU")
+  execute_process(COMMAND ${CMAKE_Fortran_COMPILER} -print-file-name=include/ISO_Fortran_binding.h
+                  OUTPUT_VARIABLE ISO_FORTRAN_BINDING OUTPUT_STRIP_TRAILING_WHITESPACE)
+  if(NOT EXISTS "${ISO_FORTRAN_BINDING}")
+    message(FATAL_ERROR "ISO_Fortran_binding.h not found via ${CMAKE_Fortran_COMPILER}")
+  endif()
+  configure_file(${ISO_FORTRAN_BINDING} ${CMAKE_BINARY_DIR}/fortran-include/ISO_Fortran_binding.h COPYONLY)
+  include_directories(SYSTEM ${CMAKE_BINARY_DIR}/fortran-include)
+endif()
 # https://gitlab.kitware.com/cmake/community/-/wikis/doc/cmake/RPATH-handling
 set(CMAKE_MACOSX_RPATH TRUE)
 set(CMAKE_SKIP_BUILD_RPATH TRUE)

@@ -1,3 +1,10 @@
 *.pyc
 bin/
 build/
+
+# DAMASK-Metal: local builds, logs and diagnostic captures
+build*/
+*.log
+*.egg-info/
+tests/metal/**/*.batch
+tests/metal/**/*.ref
