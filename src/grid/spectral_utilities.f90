@@ -426,6 +426,7 @@ subroutine utilities_updateGamma(C)
 #ifdef METAL
   if (GPU_Gamma) then
     if (Metal_setCRef(GPU,C_ref) /= 0) error stop 'Metal: setting reference stiffness failed'
+    if (.not. GPU_verify) return                                                                    ! Gamma_hat is only used by the CPU convolution
   end if
 #endif
 

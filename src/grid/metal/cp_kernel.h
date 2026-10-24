@@ -122,6 +122,9 @@ template<> struct cp_ops<double> {
   static double ab(double x)    { return std::fabs(x); }
   static bool   finite(double x){ return std::isfinite(x); }
 };
+
+//> host: double as an unevaluated float pair hi + lo (constants for the GPU)
+inline cp_pair cp_to_pair(double x) { cp_pair p; p.hi = float(x); p.lo = float(x - double(p.hi)); return p; }
 #endif
 
 

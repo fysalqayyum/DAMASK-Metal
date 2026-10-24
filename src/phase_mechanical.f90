@@ -40,7 +40,6 @@ submodule(phase) mechanical
     real(C_DOUBLE), dimension(:), allocatable :: T
     integer, dimension(:), allocatable :: ce_list
     logical :: submitted = .false.                                                                  !< queued on the GPU, not yet unpacked
-    integer :: n_CPU = 0                                                                            !< GPU-capable cells left to the CPU (split)
     real(pREAL) :: share = 0.8_pREAL                                                                !< share of the GPU-capable cells on the GPU (automatic split)
     real(pREAL) :: dt = 0.0_pREAL                                                                   !< time step of the submitted batch
   end type tGPUwork
@@ -1625,7 +1624,6 @@ module subroutine phase_mechanical_constitutive_GPU(Delta_t,ce_start,ce_end,elig
       end do
     end if
     n = count(take)
-    GPU_work(ph)%n_CPU = n_take - n
     if (n == 0) cycle
 
     N_s  = plasticState(ph)%sizeState
@@ -1654,7 +1652,7 @@ module subroutine phase_mechanical_constitutive_GPU(Delta_t,ce_start,ce_end,elig
       S0(1:3,1:3,i)       = phase_mechanical_S0(ph)%data(1:3,1:3,en)                                ! = S after restore (initial dotState)
       Lp_guess(1:3,1:3,i) = phase_mechanical_Lp(ph)%data(1:3,1:3,en)                                ! as integrateStress
       state0(1:N_s,i)     = plasticState(ph)%state0(1:N_s,en)
-      if (GPU_ndep(ph) > 0) call GPU_dependent(ph,en,state0(1:N_s,i),state0(N_s+1:N_st,i),.false.)   ! as stored (first predictor)
+      if (GPU_ndep(ph) > 0) call GPU_dependent(ph,en,state0(N_s+1:N_st,i),.false.)   ! as stored (first predictor)
       Temp(i)             = thermal_T(ph,en)
     end do
     !$OMP END PARALLEL DO
@@ -1676,7 +1674,8 @@ module subroutine phase_mechanical_constitutive_GPU(Delta_t,ce_start,ce_end,elig
   subroutine GPU_setup()
 
     integer :: ph
-    real(pREAL), dimension(7) :: numerics
+    real(pREAL), dimension(7) :: numerics, numerics_twin
+    integer, parameter :: NSTATE_DEFAULT = 14                                                       !< GPU state-iteration cap (slow points: CPU)
 
 
     block
@@ -1688,7 +1687,8 @@ module subroutine phase_mechanical_constitutive_GPU(Delta_t,ce_start,ce_end,elig
     end block
     numerics = [Metal_rtol_S, 1.0e-6_pREAL, num%rtol_crystalliteState, num%stepSizeLp, 0.5_pREAL, &
                 real(num%nStress_Lp,pREAL), real(min(num%nState,Metal_nState),pREAL)]                ! slow points: CPU (the batch waits for the slowest)
-    if (Metal_nState < 0) numerics(7) = real(min(num%nState,14),pREAL)                             ! default; tdt, twintrip: as the CPU (twin nucleation)
+    if (Metal_nState < 0) numerics(7) = real(min(num%nState,NSTATE_DEFAULT),pREAL)                 ! default (-1): per model
+    numerics_twin = [numerics(1:6),merge(real(num%nState,pREAL),numerics(7),Metal_nState < 0)]     ! tdt, twintrip: as the CPU (twin nucleation)
     allocate(GPU_handle(size(mechanical_plasticity_type)), source=-1)
     allocate(GPU_C66(6,6,size(GPU_handle)), source=0.0_pREAL)
     allocate(GPU_tangent(size(GPU_handle)))
@@ -1714,14 +1714,11 @@ module subroutine phase_mechanical_constitutive_GPU(Delta_t,ce_start,ce_end,elig
           GPU_ndep(ph) = 2*plasticState(ph)%sizeState/3                                              ! [tau_pass, Lambda_sl], 2 x N_sl
         case (MECHANICAL_PLASTICITY_TDT)
           GPU_C66(1:6,1:6,ph) = elastic_C66(ph,1)                                                   ! parent; homogenized on the GPU
-          GPU_handle(ph) = plastic_tdt_GPUadd(ph,GPU_C66(1:6,1:6,ph), &
-                                              [numerics(1:6),merge(real(num%nState,pREAL),numerics(7),Metal_nState < 0)])
+          GPU_handle(ph) = plastic_tdt_GPUadd(ph,GPU_C66(1:6,1:6,ph),numerics_twin)
           GPU_ndep(ph) = 36                                                                         ! homogenized C66
         case (MECHANICAL_PLASTICITY_TWINTRIP)
           GPU_C66(1:6,1:6,ph) = elastic_C66(ph,1)                                                   ! austenite; homogenized on the GPU
-          GPU_handle(ph) = plastic_twintrip_GPUadd(ph,GPU_C66(1:6,1:6,ph), &
-                                                   [numerics(1:6),merge(real(num%nState,pREAL),numerics(7),Metal_nState < 0)], &
-                                                   GPU_ndep(ph))
+          GPU_handle(ph) = plastic_twintrip_GPUadd(ph,GPU_C66(1:6,1:6,ph),numerics_twin,GPU_ndep(ph))
       end select
       if (GPU_handle(ph) >= 0 .and. Metal_tangent) then
         allocate(GPU_tangent(ph)%dPdF(3,3,3,3,size(phase_mechanical_F(ph)%data,3)))
@@ -1740,11 +1737,10 @@ end subroutine phase_mechanical_constitutive_GPU
 !> @details ok(ce) = .true. if the cell was integrated (P, S, Fp, Fe, Lp, state written). t_CPU: wall
 !> time of the CPU work done meanwhile on n_CPU cells, used to balance the automatic split.
 !--------------------------------------------------------------------------------------------------
-module subroutine phase_mechanical_constitutive_GPU_finish(t_CPU,n_CPU,ce_start,ce_end,pending,ok)
+module subroutine phase_mechanical_constitutive_GPU_finish(t_CPU,n_CPU,ce_start,ce_end,ok)
 
   real(pREAL), intent(in) :: t_CPU
   integer, intent(in) :: n_CPU, ce_start, ce_end
-  logical, dimension(ce_start:ce_end), intent(in)  :: pending
   logical, dimension(ce_start:ce_end), intent(out) :: ok
 
   integer :: ph, en, i, n, N_s, N_st
@@ -1775,7 +1771,7 @@ module subroutine phase_mechanical_constitutive_GPU_finish(t_CPU,n_CPU,ce_start,
         phase_mechanical_Fe(ph)%data(1:3,1:3,en) = w%Fe(1:3,1:3,i)
         phase_mechanical_Lp(ph)%data(1:3,1:3,en) = w%Lp(1:3,1:3,i)
         plasticState(ph)%state(1:N_s,en)         = w%state(1:N_s,i)
-        if (GPU_ndep(ph) > 0) call GPU_dependent(ph,en,w%state(1:N_s,i),w%state(N_s+1:N_st,i),.true.) ! of the last stress solve
+        if (GPU_ndep(ph) > 0) call GPU_dependent(ph,en,w%state(N_s+1:N_st,i),.true.) ! of the last stress solve
         if (mechanical_plasticity_type(ph) == MECHANICAL_PLASTICITY_TWINTRIP) then                  ! converged Li loop: Fi = j I
           j = plastic_twintrip_GPUj(ph,en)
           phase_mechanical_Fi(ph)%data(1:3,1:3,en) = j*math_I3
@@ -1800,10 +1796,9 @@ end subroutine phase_mechanical_constitutive_GPU_finish
 !--------------------------------------------------------------------------------------------------
 !> @brief Get (set = .false.) or set the dependent state of an entry (models that have one).
 !--------------------------------------------------------------------------------------------------
-subroutine GPU_dependent(ph,en,x,D,set)
+subroutine GPU_dependent(ph,en,D,set)
 
   integer, intent(in) :: ph, en
-  real(pREAL), dimension(:), intent(in) :: x                                                        ! state
   real(pREAL), dimension(:), intent(inout) :: D
   logical, intent(in) :: set
 

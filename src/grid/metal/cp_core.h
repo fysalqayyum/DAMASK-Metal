@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //--------------------------------------------------------------------------------------------------
 //> @brief Model-independent core of the GPU constitutive update for slip-based plasticity models
-//> (Hooke elasticity, Fi = I, no eigenstrain), and the model policies.
+//> (Hooke elasticity; Fi = I, or Fi = j(X) I with FI_STATE), and the model policies.
 //> @details The core does: elastic stress residual (cancellation free), Jacobian, Newton solve on S
 //> with trust region and backtracking, warm start, FPI state integration with DAMASK's damper,
 //> delta state after convergence, outputs, and DAMASK's analytic tangent (phase_mechanical_dPdF).
@@ -277,7 +277,7 @@ inline void cp_core_presolve_float(CP_CONSTANT typename M::param& p, CP_CONSTANT
   for (int k = 0; k < 6; ++k) S[k] = O::c(S_best[k]);
 }
 
-//> Newton iteration on S with backtracking and trust region (as cp_solve_stress)
+//> Newton iteration on S with backtracking and trust region
 template<typename H, class M>
 inline int cp_core_solve_stress(CP_CONSTANT typename M::param& p, CP_CONSTANT cp_numerics& num,
                                 CP_THREAD const H* Mt, CP_THREAD const H* Ea, H dt,
@@ -322,12 +322,11 @@ inline int cp_core_solve_stress(CP_CONSTANT typename M::param& p, CP_CONSTANT cp
 
 
 //--------------------------------------------------------------------------------------------------
-//> integrate stress and state of one material point over dt (same algorithm as cp_integrate_slim)
+//> integrate stress and state of one material point over dt (DAMASK's integrateStateFPI)
 template<typename H, class M>
 inline int cp_core_integrate(CP_CONSTANT typename M::param& p, CP_CONSTANT cp_numerics& num, H dt,
                              cp_soa_const<H> in, cp_soa<H> out, CP_THREAD int& iters) {
   typedef cp_ops<H> O;
-  typedef typename O::J J;
   typedef cp_layout<M> L;
   const int ND = M::ND, NY = M::NY > 0 ? M::NY : 1, NDEP = M::NDEP > 0 ? M::NDEP : 1;
   iters = 0;
@@ -457,12 +456,6 @@ inline int cp_core_integrate(CP_CONSTANT typename M::param& p, CP_CONSTANT cp_nu
       X[j] = M::PRECOND ? X[j] - r * (1.0f / (1.0f - O::f(dt) * Jd[M::PRECOND ? j : 0])) : X[j] - r;
       conv = conv && O::f(O::ab(r)) <= CP_FMAX(M::atol(p, j), num.rtol_state * O::f(O::ab(X[j])));
     }
-#if defined(CP_DEBUG_FPI) && !defined(__METAL_VERSION__)
-    { int jm = 0; float rm = 0.0f;
-      for (int j = 0; j < ND; ++j) { float rr = O::f(O::ab(X[j] - in.get(L::X0+j) - dX[j]*dt)) / CP_FMAX(M::atol(p, j), num.rtol_state*O::f(O::ab(X[j]))); (void)rr; }
-      for (int j = 0; j < ND; ++j) { float rr = std::fabs(O::f(dX[j]) - O::f(dl1[j]))*O::f(dt) / CP_FMAX(M::atol(p, j), num.rtol_state*O::f(O::ab(X[j]))); if (rr > rm) { rm = rr; jm = j; } }
-      std::printf("   FPI it %2d zeta %.3f worst comp %3d (r/tol %.3e) X %.6e dX %.6e S %.4e %.4e %.4e\n", it, zeta, jm, rm, O::f(X[jm]), O::f(dX[jm]), O::f(S[0]), O::f(S[1]), O::f(S[2])); }
-#endif
     if (conv) { status = CP_OK; break; }
   }
   if (status != CP_OK) return status;

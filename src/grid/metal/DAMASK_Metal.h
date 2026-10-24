@@ -28,15 +28,15 @@ int C_Metal_set_C_ref(void* ctx, const double* c_ref);
 //> out = Gamma * field with average aim, field/out real(3,3,n1,n2,n3) (may alias)
 int C_Metal_gamma_convolution(void* ctx, const double* field, const double* aim, double* out);
 
-//> constitutive update on the GPU: Hooke elasticity + phenopowerlaw slip (no twinning, Schmid law),
-//> Fi = I, no eigenstrain; FPI state integration (see cp_kernel.h). N_sl must be 12, 24 or 48.
-//> C66(6,6), P_sl/P_nS_pos/P_nS_neg(3,3,N_sl), h_sl_sl(N_sl,N_sl), per-system vectors (N_sl);
-//> h_0 includes the factor (1+c_1*0**c_2) of DAMASK 3.1 (no twins).
-//> numerics: rtol_S, atol_S, rtol_state, r_linesearch, trust_S, N_iter_stress, N_iter_state.
-//> Returns a handle >= 0 for C_Metal_cp_integrate, < 0 on failure.
 //> compile the constitutive shaders from the given source instead of the embedded one (tests)
 int C_Metal_cp_set_source(void* ctx, const char* msl_source);
 
+//> constitutive update on the GPU: Hooke elasticity + phenopowerlaw slip (no twinning, Schmid law),
+//> Fi = I, no eigenstrain; FPI state integration (cp_core.h, cp_model_pheno). N_sl <= 48 (padded to
+//> 12, 24, 30 or 48). C66(6,6), P_sl/P_nS_pos/P_nS_neg(3,3,N_sl), h_sl_sl(N_sl,N_sl), per-system
+//> vectors (N_sl); h_0 includes the factor (1+c_1*0**c_2) of DAMASK 3.1 (no twins).
+//> numerics: rtol_S, atol_S, rtol_state, r_linesearch, trust_S, N_iter_stress, N_iter_state.
+//> Returns a handle >= 0 for C_Metal_cp_integrate, < 0 on failure.
 int C_Metal_cp_add_phase(void* ctx, int N_sl, const double* C66,
                          const double* P_sl, const double* P_nS_pos, const double* P_nS_neg,
                          const double* h_sl_sl, const double* dot_gamma_0, const double* n,

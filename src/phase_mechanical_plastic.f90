@@ -558,4 +558,40 @@ function plastic_active(plastic_label) result(active_plastic)
 
 end function plastic_active
 
+
+!--------------------------------------------------------------------------------------------------
+!> @brief Inverse of a 6x6 matrix (Gauss-Jordan, partial pivoting), for the tdt and twintrip
+!> stiffness homogenization; same algorithm as cp_inv66 on the GPU.
+!--------------------------------------------------------------------------------------------------
+pure function inv66(A) result(B)
+
+  real(pREAL), dimension(6,6), intent(in) :: A
+  real(pREAL), dimension(6,6) :: B
+
+  real(pREAL), dimension(6,12) :: W
+  real(pREAL), dimension(12) :: r
+  real(pREAL) :: q
+  integer :: c, j, p
+
+
+  W = 0.0_pREAL
+  W(1:6,1:6) = A
+  do c = 1, 6
+    W(c,6+c) = 1.0_pREAL
+  end do
+  do c = 1, 6
+    p = c - 1 + maxloc(abs(W(c:6,c)),1)
+    if (p /= c) then
+      r = W(c,:); W(c,:) = W(p,:); W(p,:) = r
+    end if
+    q = 1.0_pREAL/W(c,c)
+    W(c,:) = W(c,:)*q
+    do j = 1, 6
+      if (j /= c) W(j,:) = W(j,:) - W(j,c)*W(c,:)
+    end do
+  end do
+  B = W(1:6,7:12)
+
+end function inv66
+
 end submodule plastic

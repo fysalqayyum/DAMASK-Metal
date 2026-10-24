@@ -539,8 +539,9 @@ end subroutine kinetics_tw
 
 #if defined(METAL) && defined(GRID)
 !--------------------------------------------------------------------------------------------------
-!> @brief Upload the model of a phase to the GPU constitutive kernel (src/grid/metal/cp_kernel.h).
-!> @details Supported: slip only (no twinning), up to 48 slip systems, Schmid law. Without twins,
+!> @brief Upload the model of a phase to the GPU constitutive kernel (cp_model_pheno, or
+!> cp_model_phenotw with twins; src/grid/metal/cp_core.h).
+!> @details Supported: up to 48 slip systems, twins via GPUadd_twinning, Schmid law. Without twins,
 !> dot_xi_sl uses h_0*(1+c_1*0**c_2), which is folded into h_0 (identical to phenopowerlaw_dotState).
 !> Returns the GPU handle or a negative number if the phase stays on the CPU.
 !--------------------------------------------------------------------------------------------------

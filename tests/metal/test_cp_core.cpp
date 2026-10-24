@@ -101,10 +101,9 @@ static bool ref_stress(const P& p, const Kin& kin, const double* F, const double
   std::memcpy(Lp, Lpg, sizeof(Lpg));
   S6[0]=S[0]; S6[1]=S[4]; S6[2]=S[8]; S6[3]=S[CP_IDX(1,2)]; S6[4]=S[CP_IDX(0,2)]; S6[5]=S[CP_IDX(0,1)];
   cp_mul33<double>(iFp0, B, invFpu);
-  double t1[9], t2[9]; cp_mul33<double>(F, invFpu, Fe); cp_mul33<double>(Fe, S, t1); cp_mul3T3<double>(t1, invFpu, P_);
+  double t1[9]; cp_mul33<double>(F, invFpu, Fe); cp_mul33<double>(Fe, S, t1); cp_mul3T3<double>(t1, invFpu, P_);
   double Fpn[9]; cp_inv33<double>(invFpu, Fpn); double s = std::cbrt(cp_det33<double>(Fpn));
   for (int k = 0; k < 9; ++k) Fp[k] = Fpn[k]/s;
-  (void)t2;
   return true;
 }
 

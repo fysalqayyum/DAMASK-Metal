@@ -335,10 +335,9 @@ module phase
       logical, dimension(ce_start:ce_end), intent(out) :: pending
     end subroutine phase_mechanical_constitutive_GPU
 
-    module subroutine phase_mechanical_constitutive_GPU_finish(t_CPU,n_CPU,ce_start,ce_end,pending,ok)
+    module subroutine phase_mechanical_constitutive_GPU_finish(t_CPU,n_CPU,ce_start,ce_end,ok)
       real(pREAL), intent(in) :: t_CPU
       integer, intent(in) :: n_CPU, ce_start, ce_end
-      logical, dimension(ce_start:ce_end), intent(in)  :: pending
       logical, dimension(ce_start:ce_end), intent(out) :: ok
     end subroutine phase_mechanical_constitutive_GPU_finish
 #endif

@@ -105,20 +105,6 @@ module Metal
       integer(C_INT) :: handle
     end function Metal_cpAddPhaseTwintrip
 
-    function Metal_cpIntegrate(ctx,handle,n,dt,F,Fp0,S0,Lp_guess,state0,T,P,S,Fp,Fe,Lp,state,dPdF,status,iterations) &
-                               bind(C, name='C_Metal_cp_integrate') result(stat)
-      import :: C_PTR, C_INT, C_DOUBLE
-      type(C_PTR), value :: ctx
-      integer(C_INT), value :: handle, n
-      real(C_DOUBLE), value :: dt
-      real(C_DOUBLE), dimension(*), intent(in)    :: F, Fp0, S0, Lp_guess, state0
-      type(C_PTR), value :: T                                                                       ! real(C_DOUBLE)(n) temperature or C_NULL_PTR
-      real(C_DOUBLE), dimension(*), intent(inout) :: P, S, Fp, Fe, Lp, state
-      type(C_PTR), value :: dPdF                                                                    ! real(C_FLOAT)(3,3,3,3,n) or C_NULL_PTR
-      integer(C_INT), dimension(*), intent(out)   :: status, iterations
-      integer(C_INT) :: stat
-    end function Metal_cpIntegrate
-
     function Metal_cpSubmit(ctx,handle,n,dt,F,Fp0,S0,Lp_guess,state0,T,P,S,Fp,Fe,Lp,state,dPdF,status,iterations) &
                             bind(C, name='C_Metal_cp_submit') result(stat)
       import :: C_PTR, C_INT, C_DOUBLE
@@ -146,12 +132,6 @@ module Metal
       integer(C_INT), value :: mode
     end subroutine Metal_cpSetPrecision
 
-    subroutine Metal_lastTiming(ctx,t_GPU,t_host) bind(C, name='C_Metal_last_timing')
-      import :: C_PTR, C_DOUBLE
-      type(C_PTR), value :: ctx
-      real(C_DOUBLE), intent(out) :: t_GPU, t_host
-    end subroutine Metal_lastTiming
-
   end interface
 
   public :: &
@@ -165,11 +145,9 @@ module Metal
     Metal_cpAddPhaseModel, &
     Metal_cpAddPhaseTdt, &
     Metal_cpAddPhaseTwintrip, &
-    Metal_cpIntegrate, &
     Metal_cpSubmit, &
     Metal_cpWait, &
-    Metal_cpSetPrecision, &
-    Metal_lastTiming
+    Metal_cpSetPrecision
 #endif
 
 end module Metal

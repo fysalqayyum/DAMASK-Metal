@@ -47,7 +47,7 @@ static int run(void* ctx, const char* name, int model, int N, const std::vector<
   typename M::param prm; std::memset(&prm, 0, sizeof(prm));
   double C66[36]; std::vector<double> P(9*N), Pp(9*N), Pn(9*N), h(N*N, 1.0);
   cF(N, C66, P.data(), Pp.data(), Pn.data());
-  if (Cel) for (int k = 0; k < 36; ++k) C66[k] = 0, (void)0;
+  if (Cel) for (int k = 0; k < 36; ++k) C66[k] = 0;
   if (Cel) { for (int a = 0; a < 3; ++a) for (int b = 0; b < 3; ++b) C66[a+6*b] = a == b ? Cel[0] : Cel[1]; for (int a = 3; a < 6; ++a) C66[a+6*a] = Cel[2]; }
   for (int k = 0; k < 36; ++k) prm.C66[k] = pr(C66[k]);
   for (int k = 0; k < 9*N; ++k) { prm.P_sl[k] = pr(P[k]); prm.P_nS_pos[k] = pr(Pp[k]); prm.P_nS_neg[k] = pr(Pn[k]); }

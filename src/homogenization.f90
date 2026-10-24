@@ -311,7 +311,7 @@ subroutine homogenization_mechanical_response(status,Delta_t,cell_start,cell_end
   call system_clock(t1)
 
   call phase_mechanical_constitutive_GPU_finish(real(t1-t0,pREAL)/real(rate,pREAL),count(.not. GPU_pending), &
-                                                cell_start,cell_end,GPU_pending,GPU_done)
+                                                cell_start,cell_end,GPU_done)
   !$OMP PARALLEL DO
   do ce = cell_start, cell_end
     if (GPU_pending(ce)) call cell_response(ce,GPU_done(ce))                                        ! points the GPU did not integrate: CPU

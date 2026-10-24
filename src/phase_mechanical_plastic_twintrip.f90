@@ -572,11 +572,12 @@ module function twintrip_dotStateDiag(Mp,ph,en) result(Jd)
   real(pREAL), dimension(param(ph)%sum_N_tw) :: fd_tw
   real(pREAL), dimension(param(ph)%sum_N_tr) :: fd_tr
   real(pREAL), dimension(4) :: gT, gE, gA
-  real(pREAL), dimension(:,:), allocatable :: nT, nE, nA
+  real(pREAL), dimension(max(param(ph)%Tw%N_fam,1),4) :: nT                                         ! automatic: no heap allocation per call
+  real(pREAL), dimension(max(param(ph)%Ep%N_fam,1),4) :: nE
+  real(pREAL), dimension(max(param(ph)%Al%N_fam,1),4) :: nA
 
 
   associate(prm => param(ph))
-    allocate(nT(max(prm%Tw%N_fam,1),4),nE(max(prm%Ep%N_fam,1),4),nA(max(prm%Al%N_fam,1),4))
     call kinetics(Mp,thermal_T(ph,en),ph,en,gd,fd_tw,fd_tr,gT,gE,gA,nT=nT,nE=nE,nA=nA)
     Jd = 0.0_pREAL
     call regions_diag(prm%Tw,gT,nT)
@@ -713,20 +714,30 @@ function twintrip_C66(C,wT,wE,wA,ph) result(Cbar)
       c_hP = [C11 - C14**2/C44, C12 + C14**2/C44, C44 - C14**2/(0.5_pREAL*(C11 - C12)), C13, C33]
     end if
 
-    Cbar = merge(w_g*inv66(C),w_g*C,prm%Reuss)
+    if (prm%Reuss) then                                                                             ! (merge would evaluate inv66 also for Voigt)
+      Cbar = w_g*inv66(C)
+    else
+      Cbar = w_g*C
+    end if
     do p = 1, 4
       if (wT(p) > 0.0_pREAL) then
         C_r = C(1,1)*prm%C_T(:,:,1,p) + C(1,2)*prm%C_T(:,:,2,p) + C(4,4)*prm%C_T(:,:,3,p)
-        Cbar = Cbar + wT(p)*merge(inv66(C_r),C_r,prm%Reuss)
+        if (prm%Reuss) C_r = inv66(C_r)
+        Cbar = Cbar + wT(p)*C_r
       end if
       if (wE(p) > 0.0_pREAL) then
         C_r = 0.0_pREAL
         do i = 1, 5
           C_r = C_r + c_hP(i)*prm%C_E(:,:,i,p)
         end do
-        Cbar = Cbar + wE(p)*merge(inv66(C_r),C_r,prm%Reuss)
+        if (prm%Reuss) C_r = inv66(C_r)
+        Cbar = Cbar + wE(p)*C_r
       end if
-      if (wA(p) > 0.0_pREAL) Cbar = Cbar + wA(p)*merge(inv66(prm%C_A(:,:,p)),prm%C_A(:,:,p),prm%Reuss)
+      if (wA(p) > 0.0_pREAL) then
+        C_r = prm%C_A(:,:,p)
+        if (prm%Reuss) C_r = inv66(C_r)
+        Cbar = Cbar + wA(p)*C_r
+      end if
     end do
     if (prm%Reuss) Cbar = inv66(Cbar)
 
@@ -1050,41 +1061,6 @@ pure subroutine kinetics_sl(Mp,T,ph,en,dot_gamma_sl,ddot_gamma_dtau_sl)
   end associate
 
 end subroutine kinetics_sl
-
-
-!--------------------------------------------------------------------------------------------------
-!> @brief Inverse of a 6x6 matrix (Gauss-Jordan, partial pivoting).
-!--------------------------------------------------------------------------------------------------
-pure function inv66(A) result(B)
-
-  real(pREAL), dimension(6,6), intent(in) :: A
-  real(pREAL), dimension(6,6) :: B
-
-  real(pREAL), dimension(6,12) :: W
-  real(pREAL), dimension(12) :: r
-  real(pREAL) :: q
-  integer :: c, j, p
-
-
-  W = 0.0_pREAL
-  W(1:6,1:6) = A
-  do c = 1, 6
-    W(c,6+c) = 1.0_pREAL
-  end do
-  do c = 1, 6
-    p = c - 1 + maxloc(abs(W(c:6,c)),1)
-    if (p /= c) then
-      r = W(c,:); W(c,:) = W(p,:); W(p,:) = r
-    end if
-    q = 1.0_pREAL/W(c,c)
-    W(c,:) = W(c,:)*q
-    do j = 1, 6
-      if (j /= c) W(j,:) = W(j,:) - W(j,c)*W(c,:)
-    end do
-  end do
-  B = W(1:6,7:12)
-
-end function inv66
 
 
 #if defined(METAL) && defined(GRID)

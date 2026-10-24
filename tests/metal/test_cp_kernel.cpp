@@ -82,8 +82,7 @@ static bool ref_stress(const cp_pheno_param& p, double rtol, const double* F, co
                        double dt, double* Lp, double* S6, double* P, double* Fp, int& its) {
   double C3[81];                                                                                     // C_ijkl at i+3j+9k+27l
   for (int i=0;i<3;++i) for (int j=0;j<3;++j) for (int k=0;k<3;++k) for (int l=0;l<3;++l) {
-    auto v = [](int a,int b){ return a==b ? a : 6-a-b-0*0 + (0); };
-    int I = i==j ? i : (3 + (3 - i - j) - 0) ; I = i==j ? i : (i+j==3 ? 3 : (i+j==2 ? 4 : 5)); (void)v;
+    int I = i==j ? i : (i+j==3 ? 3 : (i+j==2 ? 4 : 5));
     int K = k==l ? k : (k+l==3 ? 3 : (k+l==2 ? 4 : 5));
     C3[i+3*j+9*k+27*l] = dv(p.C66[I+6*K]);
   }

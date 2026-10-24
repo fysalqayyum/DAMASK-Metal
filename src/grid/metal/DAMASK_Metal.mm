@@ -19,7 +19,7 @@
 #include <mutex>
 
 #include "DAMASK_Metal.h"
-#include "cp_models_composite.h"                                                                   // host view of the GPU data structures (incl. cp_core.h, cp_kernel.h, cp_slim.h)
+#include "cp_models_composite.h"                                                                   // host view of the GPU data structures and model policies
 #include <map>
 #include <string>
 #include <vector>
@@ -45,7 +45,8 @@ struct CPLaunch {                                                               
 };
 
 struct CPPhase {
-  int                         model;                                                                // 1: phenopowerlaw, 2: kinehardening
+  int                         model;                                                                // 1 phenopowerlaw, 2 kinehardening, 3 dislotungsten,
+                                                                                                    // 4 phenopowerlaw + twins, 5 tdt, 6 twintrip
   int                         N;                                                                    // actual slip systems
   int                         Np;                                                                   // padded (kernel) count
   int                         Np_tw = 0, Np_fam = 0;                                                // tdt: twin system and slip family capacities
@@ -82,7 +83,6 @@ struct Context {
   double t_gpu = 0.0, t_host = 0.0;
   char name[256];
   // constitutive update
-  id<MTLLibrary>              cp_lib;
   bool                        cp_failed = false;
   std::string                 cp_src;                                                               // constitutive source (compiled per model and slip system count)
   std::map<std::string, id<MTLLibrary>> cp_libs;
@@ -102,7 +102,6 @@ inline double seconds(Clock::time_point a, Clock::time_point b) { return std::ch
 
 inline df64    to_df(double x) { float h = float(x); return df_make(h, float(x - double(h))); }
 inline double  from_df(df64 x) { return double(x.hi) + double(x.lo); }
-inline cp_pair to_pair(double x) { float h = float(x); cp_pair p; p.hi = h; p.lo = float(x - double(h)); return p; }
 
 //> run body(begin, end) over [0,n) in parallel chunks on the CPU
 template<typename F>
@@ -156,12 +155,13 @@ bool cp_verify(const typename M::param& prm, const cp_numerics& num, double dt,
   for (int k = 0; k < ND; ++k) if (!std::isfinite(X[k])) return cp_reject(4);
   for (int k = 0; k < M::NY; ++k) if (!std::isfinite(Y[k])) return cp_reject(5);
 
-  double invFp0[9], B[9], iFpc[9], Fec[9], Sm[9], T1[9], Pc[9];
+  double invFp0[9], B[9], iFpc[9], FiFp[9], Fec[9], Sm[9], T1[9], Pc[9];
   cp_inv33(Fp0, invFp0);
   for (int k = 0; k < 9; ++k) B[k] = (k % 4 == 0 ? 1.0 : 0.0) - dt*Lp[k];
   cp_mul33(invFp0, B, iFpc);
   if (dist9(iFp, iFpc) > 1e-9*norm9(iFpc)) return cp_reject(6);
-  cp_mul33(F, iFp, Fec);
+  cp_mul33(F, iFp, FiFp);
+  for (int k = 0; k < 9; ++k) Fec[k] = FiFp[k];
   const double j2m1 = cp_fi<M>::template j2m1<double>(prm, X);                                      // FI_STATE: Fi = j I of the returned state
   if (M::FI_STATE) { double ij = 1.0/std::sqrt(1.0 + j2m1); for (int k = 0; k < 9; ++k) Fec[k] *= ij; }
   if (dist9(Fe, Fec) > 1e-9*norm9(Fec)) return cp_reject(7);
@@ -170,17 +170,15 @@ bool cp_verify(const typename M::param& prm, const cp_numerics& num, double dt,
   Sm[CP_IDX(1,2)] = Sm[CP_IDX(2,1)] = Sv[3];
   Sm[CP_IDX(0,2)] = Sm[CP_IDX(2,0)] = Sv[4];
   Sm[CP_IDX(0,1)] = Sm[CP_IDX(1,0)] = Sv[5];
-  cp_mul33(F, iFp, T1);                                                                             // P = F invFp S invFp^T
-  cp_mul33(T1, Sm, Pc);
+  cp_mul33(FiFp, Sm, Pc);                                                                           // P = F invFp S invFp^T
   cp_mul3T3(Pc, iFp, T1);
   for (int k = 0; k < 9; ++k) Pc[k] = T1[k];
   if (dist9(P, Pc) > 1e-8*norm9(Pc) + 1e-6) return cp_reject(8);
 
   // physics at the returned state; delta-updated Y is not used by the dot state/kinetics within a step,
   // so the dot-state check uses Y0
-  float Ff[9], invFp0f[9], A[9], Mt[9], Ea[9], Sf[6], Xf[ND], Y0f[NY], Df[NDEP], R[6], Lpc[9], Bc[9], MB[9], dX[ND];
+  float Mt[9], Ea[9], Sf[6], Xf[ND], Y0f[NY], Df[NDEP], R[6], Lpc[9], Bc[9], MB[9], dX[ND];
   cp_work<float,M> w;
-  for (int k = 0; k < 9; ++k) { Ff[k] = float(F[k]); invFp0f[k] = float(invFp0[k]); }
   for (int k = 0; k < 6; ++k) Sf[k] = float(Sv[k]);
   for (int k = 0; k < ND; ++k) Xf[k] = float(X[k]);
   for (int k = 0; k < NY; ++k) Y0f[k] = M::NY > 0 ? float(Y0[k]) : 0.0f;
@@ -191,7 +189,6 @@ bool cp_verify(const typename M::param& prm, const cp_numerics& num, double dt,
     cp_mulT33(Ad, Ad, Md);
     for (int k = 0; k < 9; ++k) { Mt[k] = float(Md[k]); Ea[k] = float(0.5*(Md[k] - (k % 4 == 0 ? 1.0 + j2m1 : 0.0))); }
   }
-  (void)A; (void)Ff; (void)invFp0f;
   cp_core_residual<float,M>(prm, Mt, Ea, float(dt), Sf, Xf, Y0f, Df, float(T), R, Lpc, Bc, MB, w, false);
   float nS = 0.0f, nR = 0.0f, nL = 0.0f, nD = 0.0f;
   for (int k = 0; k < 6; ++k) { nS += Sf[k]*Sf[k]; nR += R[k]*R[k]; }
@@ -255,6 +252,13 @@ inline int cp_state_comp(int q, int N, int base_X) {
   return base_X + (grp == 0 ? 0 : grp == 1 ? M::ND : M::ND + M::NY) + b0*M::N + i;
 }
 
+//> compile Metal Shading Language source with IEEE semantics (no fast-math reassociation)
+id<MTLLibrary> compile_msl(id<MTLDevice> dev, const char* src, NSError** err) {
+  MTLCompileOptions* opt = [MTLCompileOptions new];
+  opt.mathMode = MTLMathModeSafe;
+  return [dev newLibraryWithSource:[NSString stringWithUTF8String:src] options:opt error:err];
+}
+
 //> compile the constitutive base library and check that host and GPU agree on the data layout
 bool cp_init(Context* ctx, const char* src) {
   if (!ctx->cp_src.empty()) return true;
@@ -262,9 +266,7 @@ bool cp_init(Context* ctx, const char* src) {
   ctx->cp_failed = true;
   if (getenv("DAMASK_METAL_CP_TG")) ctx->cp_tg = NSUInteger(std::max(1, atoi(getenv("DAMASK_METAL_CP_TG"))));
   NSError* err = nil;
-  MTLCompileOptions* opt = [MTLCompileOptions new];
-  opt.mathMode = MTLMathModeSafe;
-  id<MTLLibrary> lib = [ctx->device newLibraryWithSource:[NSString stringWithUTF8String:src] options:opt error:&err];
+  id<MTLLibrary> lib = compile_msl(ctx->device, src, &err);
   if (!lib) {
     std::fprintf(stderr, "DAMASK_Metal: constitutive shader compilation failed:\n%s\n", err.localizedDescription.UTF8String);
     return false;
@@ -308,6 +310,30 @@ int cp_precision() {
   return g_cp_prec >= 0 ? g_cp_prec : 1;
 }
 
+//> constitutive base library from the embedded shader sources (if built with them)
+bool cp_init_embedded(Context* ctx) {
+#ifdef DAMASK_METAL_EMBEDDED
+  return cp_init(ctx, kMetalSourceCP);
+#else
+  return cp_init(ctx, nullptr);
+#endif
+}
+
+//> numerics of a phase: [rtol_S, atol_S, rtol_state, stepsize_ls, trust_S, n_stress, n_state] and |C66|
+void cp_set_numerics(CPPhase& ph, const double* C66, const double* numerics) {
+  ph.C_norm = 0.0;
+  for (int k = 0; k < 36; ++k) ph.C_norm += C66[k]*C66[k];
+  ph.C_norm = std::sqrt(ph.C_norm);
+  ph.num.rtol_S      = float(numerics[0]);
+  ph.num.atol_S      = float(numerics[1]);
+  ph.num.rtol_state  = float(numerics[2]);
+  ph.num.stepsize_ls = float(numerics[3]);
+  ph.num.trust_S     = float(numerics[4]);
+  ph.num.n_stress    = int(numerics[5]);
+  ph.num.n_state     = int(numerics[6]);
+  ph.num.mixed       = cp_precision();                                                             // 0 df64, 1 mixed, 2 fast
+}
+
 //> pipelines of one policy type (e.g. cp_model_pheno<12>): own library compiled with CP_MODEL_TYPE, cached;
 //> the threadgroup size is bounded at pipeline creation (more registers per thread, fewer spills)
 bool cp_pipelines(Context* ctx, const std::string& key, CPPhase& ph) {
@@ -316,10 +342,8 @@ bool cp_pipelines(Context* ctx, const std::string& key, CPPhase& ph) {
   if (!lib) {
     std::string src = std::string(fast ? "#define CP_FAST 1\n" : "") + "#define CP_MODEL_TYPE " + key + "\n" + ctx->cp_src;
     NSError* err = nil;
-    MTLCompileOptions* opt = [MTLCompileOptions new];
-    opt.mathMode = MTLMathModeSafe;
     auto t0 = Clock::now();
-    lib = [ctx->device newLibraryWithSource:[NSString stringWithUTF8String:src.c_str()] options:opt error:&err];
+    lib = compile_msl(ctx->device, src.c_str(), &err);
     if (!lib) {
       std::fprintf(stderr, "DAMASK_Metal: %s shader compilation failed:\n%s\n", key.c_str(), err.localizedDescription.UTF8String);
       return false;
@@ -606,9 +630,7 @@ void* C_Metal_new(int n1, int n2, int n3, const char* msl_source) {
     std::snprintf(ctx->name, sizeof(ctx->name), "%s", dev.name.UTF8String);
 
     NSError* err = nil;
-    MTLCompileOptions* opt = [MTLCompileOptions new];
-    opt.mathMode = MTLMathModeSafe;                                                                 // IEEE semantics (no fast-math reassociation)
-    id<MTLLibrary> lib = [dev newLibraryWithSource:[NSString stringWithUTF8String:msl_source] options:opt error:&err];
+    id<MTLLibrary> lib = compile_msl(dev, msl_source, &err);
     if (!lib) {
       std::fprintf(stderr, "DAMASK_Metal: shader compilation failed:\n%s\n", err.localizedDescription.UTF8String);
       delete ctx;
@@ -751,11 +773,7 @@ int C_Metal_cp_add_phase_model(void* p, int model, int N_sl, const double* C66,
                                const double* numerics) {
   Context* ctx = static_cast<Context*>(p);
   @autoreleasepool {
-#ifdef DAMASK_METAL_EMBEDDED
-    if (!cp_init(ctx, kMetalSourceCP)) return -1;
-#else
-    if (!cp_init(ctx, nullptr)) return -1;
-#endif
+    if (!cp_init_embedded(ctx)) return -1;
     const int Np = cp_padded(N_sl);
     if (Np == 0 || N_sl <= 0) return -2;
     CPPhase ph;
@@ -768,16 +786,16 @@ int C_Metal_cp_add_phase_model(void* p, int model, int N_sl, const double* C66,
     // common: stiffness and Schmid tensors (padded systems: zero), interaction matrix with padded stride
     auto fill_common = [&](auto* prm) {
       std::memset(prm, 0, sizeof(*prm));
-      for (int k = 0; k < 36; ++k) prm->C66[k] = to_pair(C66[k]);
+      for (int k = 0; k < 36; ++k) prm->C66[k] = cp_to_pair(C66[k]);
       for (int k = 0; k < 9*N_sl; ++k) {
-        prm->P_sl[k] = to_pair(P_sl[k]); prm->P_nS_pos[k] = to_pair(P_nS_pos[k]); prm->P_nS_neg[k] = to_pair(P_nS_neg[k]);
+        prm->P_sl[k] = cp_to_pair(P_sl[k]); prm->P_nS_pos[k] = cp_to_pair(P_nS_pos[k]); prm->P_nS_neg[k] = cp_to_pair(P_nS_neg[k]);
       }
-      for (int i = 0; i < N_sl; ++i) for (int j = 0; j < N_sl; ++j) prm->h_sl_sl[i+Np*j] = to_pair(h_sl_sl[i+N_sl*j]);
+      for (int i = 0; i < N_sl; ++i) for (int j = 0; j < N_sl; ++j) prm->h_sl_sl[i+Np*j] = cp_to_pair(h_sl_sl[i+N_sl*j]);
       prm->atol_xi = float(scalars[0]); prm->atol_gamma = float(scalars[1]); prm->N_sl = N_sl;
     };
     // per-system vectors: actual values, padded systems get pad (inert, no division by zero)
     auto vec = [&](cp_pair* dst, int k, double pad) {
-      for (int i = 0; i < Np; ++i) dst[i] = to_pair(i < N_sl ? vecs[k*N_sl + i] : pad);
+      for (int i = 0; i < Np; ++i) dst[i] = cp_to_pair(i < N_sl ? vecs[k*N_sl + i] : pad);
     };
     if (model == 1) {
       ph.param = [ctx->device newBufferWithLength:sizeof(cp_pheno_param) options:MTLResourceStorageModeShared];
@@ -802,9 +820,9 @@ int C_Metal_cp_add_phase_model(void* p, int model, int N_sl, const double* C66,
       vec(prm->p, 4, 1.0);     vec(prm->q, 5, 1.0);     vec(prm->h, 6, 0.0);     vec(prm->w, 7, 0.0);
       vec(prm->omega, 8, 1.0); vec(prm->B, 9, 1.0);     vec(prm->d_caron, 10, 0.0); vec(prm->f_at, 11, 0.0);
       const double* fp = vecs + 12*size_t(N_sl);                                                    // forestProjection (N_sl,N_sl)
-      for (int i = 0; i < N_sl; ++i) for (int j = 0; j < N_sl; ++j) prm->forest[i+Np*j] = to_pair(fp[i+N_sl*j]);
-      prm->D = to_pair(scalars[2]); prm->D_0 = to_pair(scalars[3]); prm->Q_cl = to_pair(scalars[4]);
-      prm->mu = to_pair(scalars[5]); prm->nu = to_pair(scalars[6]); prm->k_B = to_pair(scalars[7]);
+      for (int i = 0; i < N_sl; ++i) for (int j = 0; j < N_sl; ++j) prm->forest[i+Np*j] = cp_to_pair(fp[i+N_sl*j]);
+      prm->D = cp_to_pair(scalars[2]); prm->D_0 = cp_to_pair(scalars[3]); prm->Q_cl = cp_to_pair(scalars[4]);
+      prm->mu = cp_to_pair(scalars[5]); prm->nu = cp_to_pair(scalars[6]); prm->k_B = cp_to_pair(scalars[7]);
       prm->dipoleformation = scalars[8] != 0.0;
     } else {
       ph.param = [ctx->device newBufferWithLength:sizeof(cp_kineh_param) options:MTLResourceStorageModeShared];
@@ -813,17 +831,7 @@ int C_Metal_cp_add_phase_model(void* p, int model, int N_sl, const double* C66,
       vec(prm->dot_gamma_0, 0, 0.0); vec(prm->n, 1, 1.0); vec(prm->h_0_xi, 2, 0.0); vec(prm->h_0_chi, 3, 0.0);
       vec(prm->h_inf_xi, 4, 0.0); vec(prm->h_inf_chi, 5, 0.0); vec(prm->xi_inf, 6, 1.0); vec(prm->chi_inf, 7, 1.0);
     }
-    ph.C_norm = 0.0;
-    for (int k = 0; k < 36; ++k) ph.C_norm += C66[k]*C66[k];
-    ph.C_norm = std::sqrt(ph.C_norm);
-    ph.num.rtol_S      = float(numerics[0]);
-    ph.num.atol_S      = float(numerics[1]);
-    ph.num.rtol_state  = float(numerics[2]);
-    ph.num.stepsize_ls = float(numerics[3]);
-    ph.num.trust_S     = float(numerics[4]);
-    ph.num.n_stress    = int(numerics[5]);
-    ph.num.n_state     = int(numerics[6]);
-    ph.num.mixed       = cp_precision();                                                           // FP32 Newton pre-solve (df64 polish)
+    cp_set_numerics(ph, C66, numerics);
     if (getenv("DAMASK_METAL_VERBOSE"))
       std::fprintf(stderr, "DAMASK_Metal: phase model %s, %d slip systems (kernel %d), threadgroup %lu\n", policy, N_sl, Np,
                    (unsigned long)ph.integrate.maxTotalThreadsPerThreadgroup);
@@ -837,11 +845,7 @@ int C_Metal_cp_add_phase_tdt(void* p, const int* dims, const double* C66, const 
                              const double* atols, const double* numerics) {
   Context* ctx = static_cast<Context*>(p);
   @autoreleasepool {
-#ifdef DAMASK_METAL_EMBEDDED
-    if (!cp_init(ctx, kMetalSourceCP)) return -1;
-#else
-    if (!cp_init(ctx, nullptr)) return -1;
-#endif
+    if (!cp_init_embedded(ctx)) return -1;
     const int ns = dims[0], nt = dims[1], nf = dims[2];
     int NSL, NTW, NFAM;
     cp_tdt_caps(ns, nt, nf, NSL, NTW, NFAM);
@@ -865,17 +869,7 @@ int C_Metal_cp_add_phase_tdt(void* p, const int* dims, const double* C66, const 
         std::fwrite(ph.param.contents, sizeof(cp_tdt_param), 1, fo); std::fclose(fo);
       }
 
-    ph.C_norm = 0.0;
-    for (int k = 0; k < 36; ++k) ph.C_norm += C66[k]*C66[k];
-    ph.C_norm = std::sqrt(ph.C_norm);
-    ph.num.rtol_S      = float(numerics[0]);
-    ph.num.atol_S      = float(numerics[1]);
-    ph.num.rtol_state  = float(numerics[2]);
-    ph.num.stepsize_ls = float(numerics[3]);
-    ph.num.trust_S     = float(numerics[4]);
-    ph.num.n_stress    = int(numerics[5]);
-    ph.num.n_state     = int(numerics[6]);
-    ph.num.mixed       = cp_precision();
+    cp_set_numerics(ph, C66, numerics);
     if (getenv("DAMASK_METAL_VERBOSE"))
       std::fprintf(stderr, "DAMASK_Metal: phase model %s (%d slip, %d twin systems, %d slip families)\n", type.c_str(), ns, nt, nf);
     ctx->cp_phases.push_back(ph);
@@ -888,11 +882,7 @@ int C_Metal_cp_add_phase_twintrip(void* p, const int* dims, int n_blob, const do
                                   const double* atol, const double* numerics) {
   Context* ctx = static_cast<Context*>(p);
   @autoreleasepool {
-#ifdef DAMASK_METAL_EMBEDDED
-    if (!cp_init(ctx, kMetalSourceCP)) return -1;
-#else
-    if (!cp_init(ctx, nullptr)) return -1;
-#endif
+    if (!cp_init_embedded(ctx)) return -1;
     CPPhase ph;
     ph.model = 6; ph.N = 12; ph.Np = 12;
     for (int k = 0; k < 9; ++k) ph.tt[k] = dims[k];
@@ -917,17 +907,7 @@ int C_Metal_cp_add_phase_twintrip(void* p, const int* dims, int n_blob, const do
     ph.param = [ctx->device newBufferWithLength:sizeof(cp_twintrip_param) options:MTLResourceStorageModeShared];
     cp_twintrip_pack(dims, C66, blob, atol, *static_cast<cp_twintrip_param*>(ph.param.contents));
 
-    ph.C_norm = 0.0;
-    for (int k = 0; k < 36; ++k) ph.C_norm += C66[k]*C66[k];
-    ph.C_norm = std::sqrt(ph.C_norm);
-    ph.num.rtol_S      = float(numerics[0]);
-    ph.num.atol_S      = float(numerics[1]);
-    ph.num.rtol_state  = float(numerics[2]);
-    ph.num.stepsize_ls = float(numerics[3]);
-    ph.num.trust_S     = float(numerics[4]);
-    ph.num.n_stress    = int(numerics[5]);
-    ph.num.n_state     = int(numerics[6]);
-    ph.num.mixed       = cp_precision();
+    cp_set_numerics(ph, C66, numerics);
     if (getenv("DAMASK_METAL_VERBOSE"))
       std::fprintf(stderr, "DAMASK_Metal: phase model %s (state %d)\n", type.c_str(), dims[10]);
     ctx->cp_phases.push_back(ph);

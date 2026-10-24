@@ -723,7 +723,6 @@ struct cp_model_twintrip {
 //> values of the padded GPU state components
 inline void cp_tdt_pack(const int* dims, const double* C66, const double* blob, const double* atols,
                       int NSL, int NTW, int NFAM, cp_tdt_param& prm, std::vector<int>& smap, std::vector<double>& sinit) {
-  auto to_pair = [](double x) { cp_pair p; p.hi = float(x); p.lo = float(x - double(p.hi)); return p; };
   const int ns = dims[0], nt = dims[1], nf = dims[2];
   cp_tdt_param* q = &prm;
   std::memset(q, 0, sizeof(*q));
@@ -731,38 +730,38 @@ inline void cp_tdt_pack(const int* dims, const double* C66, const double* blob, 
   auto voigt = [&](const double* P9, cp_pair* Pv) {                                               // tau = sum_k S_k Pv_k
     for (int k = 0; k < 6; ++k) {
       int a = cp_voigt_i(k), c = cp_voigt_j(k);
-      Pv[k] = to_pair(k < 3 ? P9[CP_IDX(a,a)] : P9[CP_IDX(a,c)] + P9[CP_IDX(c,a)]);
+      Pv[k] = cp_to_pair(k < 3 ? P9[CP_IDX(a,a)] : P9[CP_IDX(a,c)] + P9[CP_IDX(c,a)]);
     }
   };
-  for (int i = 0; i < ns; ++i) { for (int k = 0; k < 9; ++k) q->P9[9*i+k] = to_pair(b[9*i+k]); voigt(b+9*i, q->Pv+6*i); }
+  for (int i = 0; i < ns; ++i) { for (int k = 0; k < 9; ++k) q->P9[9*i+k] = cp_to_pair(b[9*i+k]); voigt(b+9*i, q->Pv+6*i); }
   b += 9*ns;
   for (int t = 0; t < nt; ++t) for (int i = 0; i < ns; ++i) {
     const double* P = b + 9*(i + ns*t);
-    for (int k = 0; k < 9; ++k) q->P9[9*(NSL*(t+1)+i)+k] = to_pair(P[k]);
+    for (int k = 0; k < 9; ++k) q->P9[9*(NSL*(t+1)+i)+k] = cp_to_pair(P[k]);
     voigt(P, q->Pv + 6*(NSL*(t+1)+i));
   }
   b += 9*ns*nt;
-  for (int t = 0; t < nt; ++t) { for (int k = 0; k < 9; ++k) q->P9_tw[9*t+k] = to_pair(b[9*t+k]); voigt(b+9*t, q->Pv_tw+6*t); }
+  for (int t = 0; t < nt; ++t) { for (int k = 0; k < 9; ++k) q->P9_tw[9*t+k] = cp_to_pair(b[9*t+k]); voigt(b+9*t, q->Pv_tw+6*t); }
   b += 9*nt;
-  for (int k = 0; k < 36*(1+nt); ++k) q->Mel[k] = to_pair(b[k]);
+  for (int k = 0; k < 36*(1+nt); ++k) q->Mel[k] = cp_to_pair(b[k]);
   b += 36*(1+nt);
-  auto vec = [&](cp_pair* dst, int n, int cap, double pad) { for (int i = 0; i < cap; ++i) dst[i] = to_pair(i < n ? b[i] : pad); b += n; };
+  auto vec = [&](cp_pair* dst, int n, int cap, double pad) { for (int i = 0; i < cap; ++i) dst[i] = cp_to_pair(i < n ? b[i] : pad); b += n; };
   vec(q->g0, ns, NSL, 0.0); vec(q->n, ns, NSL, 1.0); vec(q->a, ns, NSL, 1.0); vec(q->h0, ns, NSL, 0.0); vec(q->xi_inf, ns, NSL, 1.0);
   for (int i = 0; i < ns; ++i) q->fam[i] = int(b[i]) - 1;
   b += ns;
   vec(q->xi_inf_tw, nf, NFAM, 1.0); vec(q->h0_tw, nf, NFAM, 0.0); vec(q->a_tw, nf, NFAM, 1.0);
   vec(q->g0_tw, nt, NTW, 0.0); vec(q->n_tw, nt, NTW, 1.0); vec(q->gch, nt, NTW, 1.0); vec(q->dxi_nuc, nt, NTW, 0.0);
   vec(q->dxi_retw, nt, NTW, 0.0); vec(q->H_chi, nt, NTW, 0.0); vec(q->h0_dtw, nt, NTW, 0.0);
-  for (int i = 0; i < ns; ++i) for (int j = 0; j < ns; ++j) q->h_ss[i+NSL*j] = to_pair(b[i+ns*j]);
+  for (int i = 0; i < ns; ++i) for (int j = 0; j < ns; ++j) q->h_ss[i+NSL*j] = cp_to_pair(b[i+ns*j]);
   b += ns*ns;
-  for (int i = 0; i < ns; ++i) for (int k = 0; k < nt; ++k) q->h_st[i+NSL*k] = to_pair(b[i+ns*k]);
+  for (int i = 0; i < ns; ++i) for (int k = 0; k < nt; ++k) q->h_st[i+NSL*k] = cp_to_pair(b[i+ns*k]);
   b += ns*nt;
-  for (int k = 0; k < nt; ++k) for (int j = 0; j < ns; ++j) q->h_ts[k+NTW*j] = to_pair(b[k+nt*j]);
+  for (int k = 0; k < nt; ++k) for (int j = 0; j < ns; ++j) q->h_ts[k+NTW*j] = cp_to_pair(b[k+nt*j]);
   b += nt*ns;
-  for (int k = 0; k < nt; ++k) for (int l = 0; l < nt; ++l) q->h_tt[k+NTW*l] = to_pair(b[k+nt*l]);
+  for (int k = 0; k < nt; ++k) for (int l = 0; l < nt; ++l) q->h_tt[k+NTW*l] = cp_to_pair(b[k+nt*l]);
   b += nt*nt;
-  q->f_n = to_pair(b[0]); q->f_sat = to_pair(b[1]); q->f_min = to_pair(b[2]);
-  for (int k = 0; k < 36; ++k) q->C66[k] = to_pair(C66[k]);
+  q->f_n = cp_to_pair(b[0]); q->f_sat = cp_to_pair(b[1]); q->f_min = cp_to_pair(b[2]);
+  for (int k = 0; k < 36; ++k) q->C66[k] = cp_to_pair(C66[k]);
   q->atol_xi = float(atols[0]); q->atol_gamma = float(atols[1]); q->atol_f = float(atols[2]);
   q->N_sl = ns; q->N_tw = nt; q->N_fam = nf; q->reuss = dims[3];
 
@@ -841,7 +840,6 @@ inline void cp_tdt_pack(const int* dims, const double* C66, const double* blob, 
 //> dims = [N_tw, N_tr, alpha, N_sys/N_fam of twin, epsilon, alpha' regions (0: elastic), Reuss, sizeState]
 inline void cp_twintrip_pack(const int* dims, const double* C66, const double* blob, const double* atol,
                              cp_twintrip_param& prm) {
-  auto to_pair = [](double x) { cp_pair p; p.hi = float(x); p.lo = float(x - double(p.hi)); return p; };
   cp_twintrip_param* q = &prm;
   std::memset(q, 0, sizeof(*q));
   const int nt = dims[0], nr = dims[1], NR[3] = {dims[3], dims[5], dims[7]}, NF[3] = {dims[4], dims[6], dims[8]};
@@ -849,12 +847,12 @@ inline void cp_twintrip_pack(const int* dims, const double* C66, const double* b
   auto voigt = [&](const double* P9, cp_pair* Pv) {                                               // tau = sum_k S_k Pv_k
     for (int k = 0; k < 6; ++k) {
       int a = cp_voigt_i(k), c = cp_voigt_j(k);
-      Pv[k] = to_pair(k < 3 ? P9[CP_IDX(a,a)] : P9[CP_IDX(a,c)] + P9[CP_IDX(c,a)]);
+      Pv[k] = cp_to_pair(k < 3 ? P9[CP_IDX(a,a)] : P9[CP_IDX(a,c)] + P9[CP_IDX(c,a)]);
     }
   };
-  auto vec = [&](cp_pair* dst, int n) { for (int i = 0; i < n; ++i) dst[i] = to_pair(b[i]); b += n; };
+  auto vec = [&](cp_pair* dst, int n) { for (int i = 0; i < n; ++i) dst[i] = cp_to_pair(b[i]); b += n; };
   vec(q->Mel, 13*36);
-  for (int i = 0; i < 12; ++i) { for (int k = 0; k < 9; ++k) q->P9_sl[9*i+k] = to_pair(b[9*i+k]); voigt(b+9*i, q->Pv_sl+6*i); }
+  for (int i = 0; i < 12; ++i) { for (int k = 0; k < 9; ++k) q->P9_sl[9*i+k] = cp_to_pair(b[9*i+k]); voigt(b+9*i, q->Pv_sl+6*i); }
   b += 108;
   for (int i = 0; i < 12; ++i) {
     double nn[9];
@@ -862,7 +860,7 @@ inline void cp_twintrip_pack(const int* dims, const double* C66, const double* b
     voigt(nn, q->Nv_sl+6*i);
   }
   b += 36;
-  for (int i = 0; i < 12; ++i) { for (int k = 0; k < 9; ++k) q->P9_tw[9*i+k] = to_pair(b[9*i+k]); voigt(b+9*i, q->Pv_tw+6*i); }
+  for (int i = 0; i < 12; ++i) { for (int k = 0; k < 9; ++k) q->P9_tw[9*i+k] = cp_to_pair(b[9*i+k]); voigt(b+9*i, q->Pv_tw+6*i); }
   b += 108;
   vec(q->forest, 144); vec(q->h_ss, 144);
   if (nt) vec(q->h_st, 144);
@@ -880,7 +878,7 @@ inline void cp_twintrip_pack(const int* dims, const double* C66, const double* b
     for (int pl = 0; pl < 4; ++pl) for (int j = 0; j < NR[k]; ++j) {
       const double* P = b + 9*(j + NR[k]*pl);
       const int sidx = (4*k+pl)*CP_TT_RMAX + j;
-      for (int m = 0; m < 9; ++m) q->rP9[9*sidx+m] = to_pair(P[m]);
+      for (int m = 0; m < 9; ++m) q->rP9[9*sidx+m] = cp_to_pair(P[m]);
       voigt(P, q->rPv + 6*sidx);
     }
     b += 36*NR[k];
@@ -890,17 +888,17 @@ inline void cp_twintrip_pack(const int* dims, const double* C66, const double* b
     vec(q->rh0 + k*CP_TT_FMAX, NF[k]); vec(q->ra + k*CP_TT_FMAX, NF[k]);
   }
   for (int k = 0; k < 3; ++k) {
-    q->poly_n[k] = int(b[0]); q->poly_x0[k] = to_pair(b[1]);
-    for (int o = 0; o < 5; ++o) q->poly[5*k+o] = to_pair(b[2+o]);
+    q->poly_n[k] = int(b[0]); q->poly_x0[k] = cp_to_pair(b[1]);
+    for (int o = 0; o < 5; ++o) q->poly[5*k+o] = cp_to_pair(b[2+o]);
     b += 7;
   }
   cp_pair* sc[] = {&q->b_tw, &q->b_tr, &q->Q_cl, &q->omega, &q->Dg, &q->i_tw, &q->i_tr, &q->L_tw, &q->L_tr, &q->x_c,
                    &q->V_cs, &q->h, &q->V_mol, &q->rho, &q->delta_sl, &q->k_alpha, &q->G_s, &q->Delta_V, &q->mu, &q->nu};
-  for (cp_pair* d : sc) *d = to_pair(*b++);
+  for (cp_pair* d : sc) *d = cp_to_pair(*b++);
   q->extended = int(b[0]); q->omit_dipoles = int(b[1]);
-  q->k_B = to_pair(1.380649e-23); q->pi = to_pair(3.14159265358979323846); q->pi_4 = to_pair(0.25*3.14159265358979323846);
-  q->gamma_eps = to_pair(std::sqrt(0.125)); q->two_thirds = to_pair(2.0/3.0); q->w_floor = to_pair(1.0e-3);
-  for (int k = 0; k < 36; ++k) q->C66[k] = to_pair(C66[k]);
+  q->k_B = cp_to_pair(1.380649e-23); q->pi = cp_to_pair(3.14159265358979323846); q->pi_4 = cp_to_pair(0.25*3.14159265358979323846);
+  q->gamma_eps = cp_to_pair(std::sqrt(0.125)); q->two_thirds = cp_to_pair(2.0/3.0); q->w_floor = cp_to_pair(1.0e-3);
+  for (int k = 0; k < 36; ++k) q->C66[k] = cp_to_pair(C66[k]);
   for (int j = 0; j < dims[10] && j < CP_TT_NDMAX; ++j) q->atol[j] = float(atol[j]);
   q->reuss = dims[9];
 }
