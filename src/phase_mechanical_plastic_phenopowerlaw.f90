@@ -537,4 +537,91 @@ pure subroutine kinetics_tw(Mp,ph,en,&
 
 end subroutine kinetics_tw
 
+#if defined(METAL) && defined(GRID)
+!--------------------------------------------------------------------------------------------------
+!> @brief Upload the model of a phase to the GPU constitutive kernel (src/grid/metal/cp_kernel.h).
+!> @details Supported: slip only (no twinning), up to 48 slip systems, Schmid law. Without twins,
+!> dot_xi_sl uses h_0*(1+c_1*0**c_2), which is folded into h_0 (identical to phenopowerlaw_dotState).
+!> Returns the GPU handle or a negative number if the phase stays on the CPU.
+!--------------------------------------------------------------------------------------------------
+module function plastic_phenopowerlaw_GPUadd(ph,C66,numerics) result(handle)
+
+  integer, intent(in) :: ph
+  real(pREAL), dimension(6,6), intent(in) :: C66
+  real(pREAL), dimension(7), intent(in) :: numerics
+  integer :: handle
+
+  real(pREAL), dimension(:), allocatable :: h_0
+  real(pREAL) :: sumF
+  character(len=:), allocatable :: reason
+  integer :: i
+
+
+  handle = -1
+  associate(prm => param(ph))
+    if (prm%sum_N_sl + prm%sum_N_tw > 48) then
+      reason = 'more than 48 slip and twin systems'
+    elseif (prm%sum_N_tw > 0 .and. prm%sum_N_sl == 0) then
+      reason = 'twinning without slip'
+    elseif (any(dNeq(prm%P_nS_pos,prm%P_sl)) .or. any(dNeq(prm%P_nS_neg,-prm%P_sl))) then
+      reason = 'non-Schmid law'
+    elseif (prm%sum_N_tw > 0) then
+      handle = GPUadd_twinning()
+      reason = 'GPU initialization failed'
+    else
+      sumF = 0.0_pREAL                                                                              ! no twins
+      h_0 = prm%h_0_sl_sl * (1.0_pREAL + prm%c_1 * sumF**prm%c_2)
+      handle = Metal_cpAddPhase(Metal_ctx,int(prm%sum_N_sl,C_INT),C66, &
+                                prm%P_sl,prm%P_nS_pos,prm%P_nS_neg,prm%h_sl_sl, &
+                                prm%dot_gamma_0_sl,prm%n_sl,prm%a_sl,h_0,prm%xi_inf_sl, &
+                                plasticState(ph)%atol(indexDotState(ph)%xi_sl(1)), &
+                                plasticState(ph)%atol(indexDotState(ph)%gamma_sl(1)),numerics)
+      reason = 'GPU initialization failed'
+    end if
+  end associate
+
+  if (handle >= 0) then
+    print'(/,1x,a,i0,a)', 'phase ',ph,': phenopowerlaw constitutive update on GPU'
+  else
+    print'(/,1x,a,i0,a)', 'phase ',ph,': phenopowerlaw constitutive update on CPU ('//reason//')'
+  end if
+  flush(IO_STDOUT)
+
+  contains
+
+  !------------------------------------------------------------------------------------------------
+  !> @brief Slip and twin systems as one set (twins appended), model 4 of the GPU constitutive kernel.
+  !------------------------------------------------------------------------------------------------
+  integer function GPUadd_twinning() result(h)
+
+    integer :: ns, nt, n
+    real(pREAL), dimension(:,:,:), allocatable :: P, P_pos, P_neg
+    real(pREAL), dimension(:,:), allocatable :: Hm
+    real(pREAL), dimension(:), allocatable :: zs, zt
+
+
+    associate(prm => param(ph))
+      ns = prm%sum_N_sl; nt = prm%sum_N_tw; n = ns + nt
+      allocate(P(3,3,n),P_pos(3,3,n),P_neg(3,3,n),Hm(n,n))
+      P(:,:,1:ns)     = prm%P_sl;     P(:,:,ns+1:n)     = prm%P_tw
+      P_pos(:,:,1:ns) = prm%P_nS_pos; P_pos(:,:,ns+1:n) = prm%P_tw                                  ! twins: unidirectional (tau > 0)
+      P_neg(:,:,1:ns) = prm%P_nS_neg; P_neg(:,:,ns+1:n) = prm%P_tw
+      Hm(1:ns,1:ns)     = prm%h_sl_sl;  Hm(1:ns,ns+1:n)   = prm%h_sl_tw
+      Hm(ns+1:n,1:ns)   = prm%h_tw_sl;  Hm(ns+1:n,ns+1:n) = prm%h_tw_tw
+      zs = [(0.0_pREAL,i=1,ns)]
+      zt = [(0.0_pREAL,i=1,nt)]
+      h = Metal_cpAddPhaseModel(Metal_ctx,4_C_INT,int(n,C_INT),C66,P,P_pos,P_neg,Hm, &
+                                [prm%dot_gamma_0_sl,prm%dot_gamma_0_tw, prm%n_sl,prm%n_tw, prm%a_sl,zt, &
+                                 prm%h_0_sl_sl,zt, prm%xi_inf_sl,zt+1.0_pREAL, prm%c_1,zt, prm%c_2,zt+1.0_pREAL, &
+                                 prm%f_sat_sl_tw,zt, zs,prm%h_0_tw_sl, zs,prm%h_0_tw_tw, &
+                                 zs+1.0_pREAL,prm%c_3, zs,prm%c_4, zs+1.0_pREAL,prm%gamma_char], &
+                                [plasticState(ph)%atol(indexDotState(ph)%xi_sl(1)), &
+                                 plasticState(ph)%atol(indexDotState(ph)%gamma_sl(1)),real(ns,pREAL)],numerics)
+    end associate
+
+  end function GPUadd_twinning
+
+end function plastic_phenopowerlaw_GPUadd
+#endif
+
 end submodule phenopowerlaw

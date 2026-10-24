@@ -527,4 +527,72 @@ pure subroutine kinetics(Mp,T,ph,en, &
 
 end subroutine kinetics
 
+#if defined(METAL) && defined(GRID)
+!--------------------------------------------------------------------------------------------------
+!> @brief Upload the model of a phase to the GPU constitutive kernel (src/grid/metal/cp_core.h).
+!> @details Supported: up to 48 slip systems (non-Schmid allowed: tau_eff >= 0). Temperature is
+!> passed per entry; the dependent state (tau_pass, Lambda_sl) travels with the state.
+!> Returns the GPU handle or a negative number if the phase stays on the CPU.
+!--------------------------------------------------------------------------------------------------
+module function plastic_dislotungsten_GPUadd(ph,C66,numerics) result(handle)
+
+  integer, intent(in) :: ph
+  real(pREAL), dimension(6,6), intent(in) :: C66
+  real(pREAL), dimension(7), intent(in) :: numerics
+  integer :: handle
+
+  character(len=:), allocatable :: reason
+
+
+  handle = -1
+  associate(prm => param(ph))
+    if (prm%sum_N_sl == 0 .or. prm%sum_N_sl > 48) then
+      reason = 'number of slip systems'
+    else
+      handle = Metal_cpAddPhaseModel(Metal_ctx,3_C_INT,int(prm%sum_N_sl,C_INT),C66, &
+                                     prm%P_sl,prm%P_nS_pos,prm%P_nS_neg,prm%h_sl_sl, &
+                                     [prm%b_sl,prm%Q_s,prm%i_sl,prm%tau_Peierls,prm%p,prm%q,prm%h,prm%w, &
+                                      prm%omega,prm%B,prm%d_caron,prm%f_at,reshape(prm%forestProjection,[prm%sum_N_sl**2])], &
+                                     [plasticState(ph)%atol(indexDotState(ph)%rho_mob(1)), &
+                                      plasticState(ph)%atol(indexDotState(ph)%gamma_sl(1)), &
+                                      prm%D,prm%D_0,prm%Q_cl, &
+                                      elastic_mu(ph,1,prm%isotropic_bound),elastic_nu(ph,1,prm%isotropic_bound), &
+                                      K_B,merge(1.0_pREAL,0.0_pREAL,prm%dipoleformation)],numerics)
+      reason = 'GPU initialization failed'
+    end if
+  end associate
+
+  if (handle >= 0) then
+    print'(/,1x,a,i0,a)', 'phase ',ph,': dislotungsten constitutive update on GPU'
+  else
+    print'(/,1x,a,i0,a)', 'phase ',ph,': dislotungsten constitutive update on CPU ('//reason//')'
+  end if
+  flush(IO_STDOUT)
+
+end function plastic_dislotungsten_GPUadd
+
+
+!--------------------------------------------------------------------------------------------------
+!> @brief Get or set the dependent state [tau_pass, Lambda_sl] of an entry for the GPU batch.
+!--------------------------------------------------------------------------------------------------
+module subroutine plastic_dislotungsten_GPUdependent(ph,en,D,set)
+
+  integer, intent(in) :: ph, en
+  real(pREAL), dimension(:), intent(inout) :: D
+  logical, intent(in) :: set
+
+
+  associate(N => param(ph)%sum_N_sl, dst => dependentState(ph))
+    if (set) then
+      dst%tau_pass(:,en)  = D(1:N)
+      dst%Lambda_sl(:,en) = D(N+1:2*N)
+    else
+      D(1:N)     = dst%tau_pass(:,en)
+      D(N+1:2*N) = dst%Lambda_sl(:,en)
+    end if
+  end associate
+
+end subroutine plastic_dislotungsten_GPUdependent
+#endif
+
 end submodule dislotungsten

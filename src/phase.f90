@@ -20,6 +20,9 @@ module phase
   use parallelization
   use HDF5
   use HDF5_utilities
+#if defined(METAL) && defined(GRID)
+  use Metal
+#endif
 
   implicit none(type,external)
   private
@@ -59,6 +62,8 @@ module phase
     MECHANICAL_PLASTICITY_DISLOTWIN, &
     MECHANICAL_PLASTICITY_DISLOTUNGSTEN, &
     MECHANICAL_PLASTICITY_NONLOCAL, &
+    MECHANICAL_PLASTICITY_TDT, &
+    MECHANICAL_PLASTICITY_TWINTRIP, &
     MECHANICAL_EIGEN_THERMALEXPANSION, &
     DAMAGE_ISOBRITTLE, &
     DAMAGE_ANISOBRITTLE, &
@@ -322,6 +327,22 @@ module phase
       integer(kind(STATUS_OK)) :: status
     end function phase_mechanical_constitutive
 
+#if defined(METAL) && defined(GRID)
+    module subroutine phase_mechanical_constitutive_GPU(Delta_t,ce_start,ce_end,eligible,pending)
+      real(pREAL), intent(in) :: Delta_t
+      integer, intent(in) :: ce_start, ce_end
+      logical, dimension(ce_start:ce_end), intent(in)  :: eligible
+      logical, dimension(ce_start:ce_end), intent(out) :: pending
+    end subroutine phase_mechanical_constitutive_GPU
+
+    module subroutine phase_mechanical_constitutive_GPU_finish(t_CPU,n_CPU,ce_start,ce_end,pending,ok)
+      real(pREAL), intent(in) :: t_CPU
+      integer, intent(in) :: n_CPU, ce_start, ce_end
+      logical, dimension(ce_start:ce_end), intent(in)  :: pending
+      logical, dimension(ce_start:ce_end), intent(out) :: ok
+    end subroutine phase_mechanical_constitutive_GPU_finish
+#endif
+
     !ToDo: Merge all the stiffness functions
     module function phase_homogenizedC66(ph,en) result(C)
       integer, intent(in) :: ph, en
@@ -403,6 +424,10 @@ module phase
     phase_restore, &
     converged, &
     phase_mechanical_constitutive, &
+#if defined(METAL) && defined(GRID)
+    phase_mechanical_constitutive_GPU, &
+    phase_mechanical_constitutive_GPU_finish, &
+#endif
     phase_thermal_constitutive, &
     phase_damage_constitutive, &
     phase_mechanical_dPdF, &

@@ -22,12 +22,102 @@ submodule(phase) mechanical
     phase_mechanical_Lp0, &
     phase_mechanical_S0
 
+#if defined(METAL) && defined(GRID)
+  integer, dimension(:), allocatable :: &
+    GPU_handle                                                                                      !< GPU constitutive model of each phase (< 0: CPU only)
+  real(pREAL), dimension(:,:,:), allocatable :: &
+    GPU_C66                                                                                         !< stiffness uploaded to the GPU
+  type :: tGPUtangent
+    real(C_FLOAT), dimension(:,:,:,:,:), allocatable :: dPdF                                        !< analytic tangent computed on the GPU
+    logical,       dimension(:),         allocatable :: valid                                       !< dPdF belongs to the current state of the entry
+  end type tGPUtangent
+  type(tGPUtangent), dimension(:), allocatable :: GPU_tangent
+  type :: tGPUwork                                                                                  !< batch buffers, kept across calls (avoids page faults)
+    real(pREAL), dimension(:,:,:), allocatable :: F, Fp0, S0, Lp_guess, P, S, Fp, Fe, Lp
+    real(pREAL), dimension(:,:),   allocatable :: state0, state
+    integer(C_INT), dimension(:),  allocatable :: stat, iterations
+    real(C_FLOAT), dimension(:,:,:,:,:), allocatable :: dPdF
+    real(C_DOUBLE), dimension(:), allocatable :: T
+    integer, dimension(:), allocatable :: ce_list
+    logical :: submitted = .false.                                                                  !< queued on the GPU, not yet unpacked
+    integer :: n_CPU = 0                                                                            !< GPU-capable cells left to the CPU (split)
+    real(pREAL) :: share = 0.8_pREAL                                                                !< share of the GPU-capable cells on the GPU (automatic split)
+    real(pREAL) :: dt = 0.0_pREAL                                                                   !< time step of the submitted batch
+  end type tGPUwork
+  integer, dimension(:), allocatable :: GPU_ndep                                                    !< size of the dependent state passed along with the state
+  type(tGPUwork), dimension(:), allocatable, target :: GPU_work
+  logical :: GPU_tangent_verify = .false.                                                           !< diagnostics: compare GPU and CPU tangent (env DAMASK_METAL_VERIFY_TANGENT)
+  logical :: GPU_verbose = .false.                                                                  !< diagnostics: split timings (env DAMASK_METAL_VERBOSE)
+  real(pREAL) :: GPU_tangent_maxdiff = 0.0_pREAL
+#endif
+
 
   interface
 
     module subroutine eigen_init(phases)
       type(tDict), pointer :: phases
     end subroutine eigen_init
+
+#if defined(METAL) && defined(GRID)
+    module function eigen_active(ph) result(active)
+      integer, intent(in) :: ph
+      logical :: active
+    end function eigen_active
+
+    module function plastic_phenopowerlaw_GPUadd(ph,C66,numerics) result(handle)
+      integer, intent(in) :: ph
+      real(pREAL), dimension(6,6), intent(in) :: C66
+      real(pREAL), dimension(7), intent(in) :: numerics
+      integer :: handle
+    end function plastic_phenopowerlaw_GPUadd
+
+    module function plastic_kinehardening_GPUadd(ph,C66,numerics) result(handle)
+      integer, intent(in) :: ph
+      real(pREAL), dimension(6,6), intent(in) :: C66
+      real(pREAL), dimension(7), intent(in) :: numerics
+      integer :: handle
+    end function plastic_kinehardening_GPUadd
+
+    module function plastic_dislotungsten_GPUadd(ph,C66,numerics) result(handle)
+      integer, intent(in) :: ph
+      real(pREAL), dimension(6,6), intent(in) :: C66
+      real(pREAL), dimension(7), intent(in) :: numerics
+      integer :: handle
+    end function plastic_dislotungsten_GPUadd
+
+    module function plastic_tdt_GPUadd(ph,C66,numerics) result(handle)
+      integer, intent(in) :: ph
+      real(pREAL), dimension(6,6), intent(in) :: C66
+      real(pREAL), dimension(7), intent(in) :: numerics
+      integer :: handle
+    end function plastic_tdt_GPUadd
+
+    module function plastic_twintrip_GPUadd(ph,C66,numerics,ndep) result(handle)
+      integer, intent(in) :: ph
+      real(pREAL), dimension(6,6), intent(in) :: C66
+      real(pREAL), dimension(7), intent(in) :: numerics
+      integer, intent(out) :: ndep
+      integer :: handle
+    end function plastic_twintrip_GPUadd
+
+    module subroutine plastic_twintrip_GPUdependent(ph,en,D,set)
+      integer, intent(in) :: ph, en
+      real(pREAL), dimension(:), intent(inout) :: D
+      logical, intent(in) :: set
+    end subroutine plastic_twintrip_GPUdependent
+
+    module function plastic_twintrip_GPUj(ph,en) result(j)
+      integer, intent(in) :: ph, en
+      real(pREAL) :: j
+    end function plastic_twintrip_GPUj
+
+
+    module subroutine plastic_dislotungsten_GPUdependent(ph,en,D,set)
+      integer, intent(in) :: ph, en
+      real(pREAL), dimension(:), intent(inout) :: D                                                  !< [tau_pass, Lambda_sl]
+      logical, intent(in) :: set
+    end subroutine plastic_dislotungsten_GPUdependent
+#endif
 
     module subroutine elastic_init(phases)
       type(tDict), pointer :: phases
@@ -62,6 +152,23 @@ submodule(phase) mechanical
         en
     end subroutine plastic_isotropic_LiAndItsTangent
 
+    module subroutine twintrip_LiAndItsTangent(Li,dLi_dMi,detFi,detFi0,Delta_t,ph,en)
+      real(pREAL), dimension(3,3),     intent(out) :: Li
+      real(pREAL), dimension(3,3,3,3), intent(out) :: dLi_dMi
+      real(pREAL),                     intent(in)  :: detFi, detFi0, Delta_t
+      integer,                         intent(in)  :: ph, en
+    end subroutine twintrip_LiAndItsTangent
+
+    module function plastic_statePreconditioner(subdt,ph,en) result(pc)
+      integer, intent(in) :: &
+        ph, &
+        en
+      real(pREAL),  intent(in) :: &
+        subdt
+      real(pREAL), dimension(plasticState(ph)%sizeDotState) :: &
+        pc
+    end function plastic_statePreconditioner
+
     module function plastic_dotState(subdt,ph,en) result(dotState)
       integer, intent(in) :: &
         ph, &
@@ -81,9 +188,13 @@ submodule(phase) mechanical
     end function plastic_deltaState
 
     module subroutine phase_LiAndItsTangents(Li, dLi_dS, dLi_dFi, &
-                                             S, Fi, ph,en)
+                                             S, Fi, ph,en, Delta_t,invFi0)
       integer, intent(in) :: &
         ph,en
+      real(pREAL),   intent(in), optional :: &
+        Delta_t                                                                                         !< time increment (state-defined eigenstrains)
+      real(pREAL),   intent(in), optional, dimension(3,3) :: &
+        invFi0                                                                                          !< inverse of Fi at the start of the increment
       real(pREAL),   intent(in),  dimension(3,3) :: &
         S                                                                                               !< 2nd Piola-Kirchhoff stress
       real(pREAL),   intent(in),  dimension(3,3) :: &
@@ -98,9 +209,11 @@ submodule(phase) mechanical
 
 
     module subroutine plastic_LpAndItsTangents(Lp, dLp_dS, dLp_dFi, &
-                                               S, Fi, ph,en)
+                                               S, Fi, Delta_t, ph,en)
       integer, intent(in) :: &
         ph,en
+      real(pREAL),   intent(in) :: &
+        Delta_t                                                                                         !< time step (models with closed-form state updates)
       real(pREAL),   intent(in),  dimension(3,3) :: &
         S, &                                                                                            !< 2nd Piola-Kirchhoff stress
         Fi                                                                                              !< intermediate deformation gradient
@@ -132,6 +245,16 @@ submodule(phase) mechanical
       character(len=*), intent(in) :: group
     end subroutine plastic_dislotwin_result
 
+    module subroutine plastic_tdt_result(ph,group)
+      integer,          intent(in) :: ph
+      character(len=*), intent(in) :: group
+    end subroutine plastic_tdt_result
+
+    module subroutine plastic_twintrip_result(ph,group)
+      integer,          intent(in) :: ph
+      character(len=*), intent(in) :: group
+    end subroutine plastic_twintrip_result
+
     module subroutine plastic_dislotungsten_result(ph,group)
       integer,          intent(in) :: ph
       character(len=*), intent(in) :: group
@@ -141,6 +264,16 @@ submodule(phase) mechanical
       integer,          intent(in) :: ph
       character(len=*), intent(in) :: group
     end subroutine plastic_nonlocal_result
+
+    module function plastic_tdt_homogenizedC(ph,en) result(homogenizedC)
+      real(pREAL), dimension(6,6) :: homogenizedC
+      integer,     intent(in) :: ph, en
+    end function plastic_tdt_homogenizedC
+
+    module function plastic_twintrip_homogenizedC(ph,en) result(homogenizedC)
+      real(pREAL), dimension(6,6) :: homogenizedC
+      integer,     intent(in) :: ph, en
+    end function plastic_twintrip_homogenizedC
 
     module function plastic_dislotwin_homogenizedC(ph,en) result(homogenizedC)
       real(pREAL), dimension(6,6) :: homogenizedC
@@ -363,6 +496,12 @@ module subroutine mechanical_result(group,ph)
     case(MECHANICAL_PLASTICITY_DISLOTUNGSTEN)
       call plastic_dislotungsten_result(ph,group//'mechanical/')
 
+    case(MECHANICAL_PLASTICITY_TDT)
+      call plastic_tdt_result(ph,group//'mechanical/')
+
+    case(MECHANICAL_PLASTICITY_TWINTRIP)
+      call plastic_twintrip_result(ph,group//'mechanical/')
+
     case(MECHANICAL_PLASTICITY_NONLOCAL)
       call plastic_nonlocal_result(ph,group//'mechanical/')
 
@@ -477,7 +616,7 @@ function integrateStress(F,Fp0,Fi0,Delta_t,ph,en) result(status)
                                        Fe, Fi_new, ph, en)
 
       call plastic_LpAndItsTangents(Lp_constitutive, dLp_dS, dLp_dFi, &
-                                    S, Fi_new, ph,en)
+                                    S, Fi_new, Delta_t, ph,en)
 
       !* update current residuum and check for convergence of loop
       atol_Lp = max(num%rtol_Lp * max(norm2(Lpguess),norm2(Lp_constitutive)), &                     ! absolute tolerance from largest acceptable relative error
@@ -522,7 +661,7 @@ function integrateStress(F,Fp0,Fi0,Delta_t,ph,en) result(status)
     end do LpLoop
 
     call phase_LiAndItsTangents(Li_constitutive, dLi_dS, dLi_dFi, &
-                                S, Fi_new, ph,en)
+                                S, Fi_new, ph,en, Delta_t,invFi_current)
 
     !* update current residuum and check for convergence of loop
     atol_Li = max(num%rtol_Li * max(norm2(Liguess),norm2(Li_constitutive)), &                       ! absolute tolerance from largest acceptable relative error
@@ -635,7 +774,12 @@ function integrateStateFPI(F_0,F,Fp0,Fi0,state0,Delta_t,ph,en) result(status)
     r = plasticState(ph)%state(1:sizeDotState,en) &
       - state0 &
       - dotState * Delta_t
-    plasticState(ph)%state(1:sizeDotState,en) = plasticState(ph)%state(1:sizeDotState,en) - r
+    if (mechanical_plasticity_type(ph) == MECHANICAL_PLASTICITY_TDT) then                           ! Jacobi-Newton: same fixed point, stiff self-coupled state
+      plasticState(ph)%state(1:sizeDotState,en) = plasticState(ph)%state(1:sizeDotState,en) &
+                                                - r*plastic_statePreconditioner(Delta_t,ph,en)
+    else
+      plasticState(ph)%state(1:sizeDotState,en) = plasticState(ph)%state(1:sizeDotState,en) - r
+    end if
 
     if (converged(r,plasticState(ph)%state(1:sizeDotState,en),plasticState(ph)%atol(1:sizeDotState))) then
       status = plastic_deltaState(ph,en)
@@ -1031,6 +1175,11 @@ module function phase_mechanical_constitutive(Delta_t,co,ce) result(status)
 
   ph = material_ID_phase(co,ce)
   en = material_entry_phase(co,ce)
+#if defined(METAL) && defined(GRID)
+  if (allocated(GPU_tangent)) then
+    if (allocated(GPU_tangent(ph)%valid)) GPU_tangent(ph)%valid(en) = .false.                       ! CPU result: tangent computed by phase_mechanical_dPdF
+  end if
+#endif
 
   state0 = plasticState(ph)%state0(:,en)
   Li0 = phase_mechanical_Li0(ph)%data(1:3,1:3,en)
@@ -1146,10 +1295,27 @@ module function phase_mechanical_dPdF(Delta_t,co,ce) result(dPdF)
                                        temp_3333
   real(pREAL), dimension(9,9)::        temp_99
   logical :: error
+#if defined(METAL) && defined(GRID)
+  real(pREAL), dimension(3,3,3,3) :: dPdF_GPU
+  logical :: compare_GPU
+#endif
 
 
   ph = material_ID_phase(co,ce)
   en = material_entry_phase(co,ce)
+#if defined(METAL) && defined(GRID)
+  compare_GPU = .false.
+  if (allocated(GPU_tangent)) then
+    if (allocated(GPU_tangent(ph)%valid)) then
+      if (GPU_tangent(ph)%valid(en)) then
+        dPdF = real(GPU_tangent(ph)%dPdF(1:3,1:3,1:3,1:3,en),pREAL)
+        if (.not. GPU_tangent_verify) return
+        dPdF_GPU = dPdF                                                                             ! diagnostics: also compute on CPU, compare at the end
+        compare_GPU = .true.
+      end if
+    end if
+  end if
+#endif
 
   call phase_hooke_SandItsTangents(devNull,dSdFe,dSdFi, &
                                    phase_mechanical_Fe(ph)%data(1:3,1:3,en), &
@@ -1189,7 +1355,7 @@ module function phase_mechanical_dPdF(Delta_t,co,ce) result(dPdF)
 
   call plastic_LpAndItsTangents(devNull,dLpdS,dLpdFi, &
                                 phase_mechanical_S(ph)%data(1:3,1:3,en), &
-                                phase_mechanical_Fi(ph)%data(1:3,1:3,en),ph,en)
+                                phase_mechanical_Fi(ph)%data(1:3,1:3,en),Delta_t,ph,en)
   dLpdS = math_mul3333xx3333(dLpdFi,dFidS) + dLpdS
 
 !--------------------------------------------------------------------------------------------------
@@ -1238,6 +1404,14 @@ module function phase_mechanical_dPdF(Delta_t,co,ce) result(dPdF)
                       + matmul(matmul(temp_33_2,dSdF(1:3,1:3,p,o)),transpose(invFp)) &
                       + matmul(temp_33_3,transpose(dFpinvdF(1:3,1:3,p,o)))
   end do; end do
+
+#if defined(METAL) && defined(GRID)
+  if (compare_GPU) then
+    !$OMP CRITICAL (GPU_tangent_compare)
+    GPU_tangent_maxdiff = max(GPU_tangent_maxdiff, norm2(dPdF_GPU-dPdF)/norm2(dPdF))
+    !$OMP END CRITICAL (GPU_tangent_compare)
+  end if
+#endif
 
 end function phase_mechanical_dPdF
 
@@ -1378,5 +1552,272 @@ module subroutine phase_set_F(F,co,ce)
   phase_mechanical_F(material_ID_phase(co,ce))%data(1:3,1:3,material_entry_phase(co,ce)) = F
 
 end subroutine phase_set_F
+
+
+#if defined(METAL) && defined(GRID)
+!--------------------------------------------------------------------------------------------------
+!> @brief Constitutive update of a batch of cells on the GPU (queued; see
+!> phase_mechanical_constitutive_GPU_finish).
+!> @details Expects single-constituent cells that are restored and partitioned (F set). Only
+!> entries the GPU kernel reproduces exactly are processed: supported plasticity models, Hooke
+!> elasticity with the stiffness uploaded at setup, Fi0 = I, no eigenstrain. A share of these cells
+!> (GPU: split, automatic: balanced by the measured times) is left to the CPU, which integrates them
+!> while the GPU runs. pending(ce) = .true. if the cell was queued on the GPU. All other cells, and
+!> those the GPU does not integrate, need phase_mechanical_constitutive (CPU, incl. cutback), which
+!> gives the same robustness as without GPU.
+!--------------------------------------------------------------------------------------------------
+module subroutine phase_mechanical_constitutive_GPU(Delta_t,ce_start,ce_end,eligible,pending)
+
+  real(pREAL), intent(in) :: Delta_t
+  integer, intent(in) :: ce_start, ce_end
+  logical, dimension(ce_start:ce_end), intent(in)  :: eligible
+  logical, dimension(ce_start:ce_end), intent(out) :: pending
+
+  integer :: ph, en, ce, i, n, N_st, N_s, n_take
+  logical, dimension(ce_start:ce_end) :: take
+  type(C_PTR) :: dPdF_ptr
+  real(pREAL) :: alpha
+
+
+  pending = .false.
+  if (.not. (Metal_constitutive .and. c_associated(Metal_ctx))) return
+  if (.not. allocated(GPU_handle)) call GPU_setup()
+  if (GPU_tangent_verify) then
+    print'(1x,a,es9.2)', 'GPU vs CPU tangent (previous call), max relative difference: ', GPU_tangent_maxdiff
+    GPU_tangent_maxdiff = 0.0_pREAL
+  end if
+
+  do ph = 1, size(GPU_handle)
+    if (GPU_handle(ph) < 0) cycle
+
+    !$OMP PARALLEL DO PRIVATE(en)
+    do ce = ce_start, ce_end
+      take(ce) = eligible(ce)
+      if (take(ce)) take(ce) = material_ID_phase(1,ce) == ph
+      if (take(ce)) then
+        en = material_entry_phase(1,ce)
+        if (mechanical_plasticity_type(ph) == MECHANICAL_PLASTICITY_TWINTRIP) then                    ! isotropic eigenstrain Fi = j(state) I
+          take(ce) = all(dEq0(phase_mechanical_Fi0(ph)%data(1:3,1:3,en) &
+                              - phase_mechanical_Fi0(ph)%data(1,1,en)*math_I3,1.0e-10_pREAL))
+        else
+          take(ce) = all(dEq0(phase_mechanical_Fi0(ph)%data(1:3,1:3,en) - math_I3,1.0e-10_pREAL))        ! O.inv(V_e).O^T = I up to rounding
+        end if
+        if (take(ce)) then
+          if (any(mechanical_plasticity_type(ph) == [MECHANICAL_PLASTICITY_TDT, &
+                                                     MECHANICAL_PLASTICITY_TWINTRIP])) then           ! stiffness from the state: parent as uploaded
+            take(ce) = all(dEq(elastic_C66(ph,en),GPU_C66(1:6,1:6,ph)))
+          else
+            take(ce) = all(dEq(phase_damage_C66(phase_homogenizedC66(ph,en),ph,en),GPU_C66(1:6,1:6,ph)))
+          end if
+        end if
+      end if
+    end do
+    !$OMP END PARALLEL DO
+    n_take = count(take)
+    if (n_take == 0) cycle
+    alpha = merge(Metal_split,GPU_work(ph)%share,Metal_split >= 0.0_pREAL)
+    if (alpha < 1.0_pREAL) then                                                                     ! CPU share spread evenly (balanced OpenMP loop)
+      i = 0
+      do ce = ce_start, ce_end
+        if (.not. take(ce)) cycle
+        i = i + 1
+        take(ce) = floor(real(i,pREAL)*alpha) > floor(real(i-1,pREAL)*alpha)
+      end do
+    end if
+    n = count(take)
+    GPU_work(ph)%n_CPU = n_take - n
+    if (n == 0) cycle
+
+    N_s  = plasticState(ph)%sizeState
+    N_st = N_s + GPU_ndep(ph)                                                                       ! state followed by dependent state
+    associate(w => GPU_work(ph))
+    if (allocated(w%ce_list)) then
+      if (size(w%ce_list) /= n) deallocate(w%ce_list,w%F,w%Fp0,w%S0,w%Lp_guess,w%state0, &
+                                           w%P,w%S,w%Fp,w%Fe,w%Lp,w%state,w%stat,w%iterations,w%dPdF,w%T)
+    end if
+    if (.not. allocated(w%ce_list)) then
+      allocate(w%ce_list(n),w%F(3,3,n),w%Fp0(3,3,n),w%S0(3,3,n),w%Lp_guess(3,3,n),w%state0(N_st,n))
+      allocate(w%P(3,3,n),w%S(3,3,n),w%Fp(3,3,n),w%Fe(3,3,n),w%Lp(3,3,n),w%state(N_st,n),w%stat(n),w%iterations(n))
+      allocate(w%dPdF(3,3,3,3,merge(n,1,Metal_tangent)),w%T(n))
+    end if
+    w%ce_list = pack([(ce,ce=ce_start,ce_end)],take)
+    dPdF_ptr = merge(c_loc(w%dPdF),C_NULL_PTR,Metal_tangent)
+    associate(ce_list => w%ce_list, F => w%F, Fp0 => w%Fp0, S0 => w%S0, Lp_guess => w%Lp_guess, &
+              state0 => w%state0, P => w%P, S => w%S, Fp => w%Fp, Fe => w%Fe, Lp => w%Lp, &
+              state => w%state, stat => w%stat, iterations => w%iterations, dPdF => w%dPdF, Temp => w%T)
+
+    !$OMP PARALLEL DO PRIVATE(en)
+    do i = 1, n
+      en = material_entry_phase(1,ce_list(i))
+      F(1:3,1:3,i)        = phase_mechanical_F(ph)%data(1:3,1:3,en)
+      Fp0(1:3,1:3,i)      = phase_mechanical_Fp0(ph)%data(1:3,1:3,en)
+      S0(1:3,1:3,i)       = phase_mechanical_S0(ph)%data(1:3,1:3,en)                                ! = S after restore (initial dotState)
+      Lp_guess(1:3,1:3,i) = phase_mechanical_Lp(ph)%data(1:3,1:3,en)                                ! as integrateStress
+      state0(1:N_s,i)     = plasticState(ph)%state0(1:N_s,en)
+      if (GPU_ndep(ph) > 0) call GPU_dependent(ph,en,state0(1:N_s,i),state0(N_s+1:N_st,i),.false.)   ! as stored (first predictor)
+      Temp(i)             = thermal_T(ph,en)
+    end do
+    !$OMP END PARALLEL DO
+
+    w%dt = Delta_t
+    w%submitted = Metal_cpSubmit(Metal_ctx,int(GPU_handle(ph),C_INT),int(n,C_INT),Delta_t, &
+                                 F,Fp0,S0,Lp_guess,state0,c_loc(Temp),P,S,Fp,Fe,Lp,state,dPdF_ptr,stat,iterations) == 0
+    if (w%submitted) pending(ce_list) = .true.
+
+    end associate
+    end associate
+  end do
+
+  contains
+
+  !------------------------------------------------------------------------------------------------
+  !> @brief Upload the models of all GPU-capable phases (first call).
+  !------------------------------------------------------------------------------------------------
+  subroutine GPU_setup()
+
+    integer :: ph
+    real(pREAL), dimension(7) :: numerics
+
+
+    block
+      integer :: l
+      call get_environment_variable('DAMASK_METAL_VERIFY_TANGENT',length=l)
+      GPU_tangent_verify = l > 0
+      call get_environment_variable('DAMASK_METAL_VERBOSE',length=l)
+      GPU_verbose = l > 0
+    end block
+    numerics = [Metal_rtol_S, 1.0e-6_pREAL, num%rtol_crystalliteState, num%stepSizeLp, 0.5_pREAL, &
+                real(num%nStress_Lp,pREAL), real(min(num%nState,Metal_nState),pREAL)]                ! slow points: CPU (the batch waits for the slowest)
+    if (Metal_nState < 0) numerics(7) = real(min(num%nState,14),pREAL)                             ! default; tdt, twintrip: as the CPU (twin nucleation)
+    allocate(GPU_handle(size(mechanical_plasticity_type)), source=-1)
+    allocate(GPU_C66(6,6,size(GPU_handle)), source=0.0_pREAL)
+    allocate(GPU_tangent(size(GPU_handle)))
+    allocate(GPU_work(size(GPU_handle)))
+    allocate(GPU_ndep(size(GPU_handle)), source=0)
+
+    do ph = 1, size(GPU_handle)
+      if (all(mechanical_plasticity_type(ph) /= [MECHANICAL_PLASTICITY_PHENOPOWERLAW, &
+                                                 MECHANICAL_PLASTICITY_KINEHARDENING, &
+                                                 MECHANICAL_PLASTICITY_DISLOTUNGSTEN, &
+                                                 MECHANICAL_PLASTICITY_TDT, &
+                                                 MECHANICAL_PLASTICITY_TWINTRIP])) cycle
+      if (eigen_active(ph) .or. damage_type(ph) /= UNDEFINED) cycle
+      if (size(phase_mechanical_F(ph)%data,3) == 0) cycle
+      GPU_C66(1:6,1:6,ph) = phase_damage_C66(phase_homogenizedC66(ph,1),ph,1)
+      select case (mechanical_plasticity_type(ph))
+        case (MECHANICAL_PLASTICITY_PHENOPOWERLAW)
+          GPU_handle(ph) = plastic_phenopowerlaw_GPUadd(ph,GPU_C66(1:6,1:6,ph),numerics)
+        case (MECHANICAL_PLASTICITY_KINEHARDENING)
+          GPU_handle(ph) = plastic_kinehardening_GPUadd(ph,GPU_C66(1:6,1:6,ph),numerics)
+        case (MECHANICAL_PLASTICITY_DISLOTUNGSTEN)
+          GPU_handle(ph) = plastic_dislotungsten_GPUadd(ph,GPU_C66(1:6,1:6,ph),numerics)
+          GPU_ndep(ph) = 2*plasticState(ph)%sizeState/3                                              ! [tau_pass, Lambda_sl], 2 x N_sl
+        case (MECHANICAL_PLASTICITY_TDT)
+          GPU_C66(1:6,1:6,ph) = elastic_C66(ph,1)                                                   ! parent; homogenized on the GPU
+          GPU_handle(ph) = plastic_tdt_GPUadd(ph,GPU_C66(1:6,1:6,ph), &
+                                              [numerics(1:6),merge(real(num%nState,pREAL),numerics(7),Metal_nState < 0)])
+          GPU_ndep(ph) = 36                                                                         ! homogenized C66
+        case (MECHANICAL_PLASTICITY_TWINTRIP)
+          GPU_C66(1:6,1:6,ph) = elastic_C66(ph,1)                                                   ! austenite; homogenized on the GPU
+          GPU_handle(ph) = plastic_twintrip_GPUadd(ph,GPU_C66(1:6,1:6,ph), &
+                                                   [numerics(1:6),merge(real(num%nState,pREAL),numerics(7),Metal_nState < 0)], &
+                                                   GPU_ndep(ph))
+      end select
+      if (GPU_handle(ph) >= 0 .and. Metal_tangent) then
+        allocate(GPU_tangent(ph)%dPdF(3,3,3,3,size(phase_mechanical_F(ph)%data,3)))
+        allocate(GPU_tangent(ph)%valid(size(phase_mechanical_F(ph)%data,3)),source=.false.)
+      end if
+    end do
+
+  end subroutine GPU_setup
+
+
+end subroutine phase_mechanical_constitutive_GPU
+
+
+!--------------------------------------------------------------------------------------------------
+!> @brief Wait for the GPU batch of phase_mechanical_constitutive_GPU and store its results.
+!> @details ok(ce) = .true. if the cell was integrated (P, S, Fp, Fe, Lp, state written). t_CPU: wall
+!> time of the CPU work done meanwhile on n_CPU cells, used to balance the automatic split.
+!--------------------------------------------------------------------------------------------------
+module subroutine phase_mechanical_constitutive_GPU_finish(t_CPU,n_CPU,ce_start,ce_end,pending,ok)
+
+  real(pREAL), intent(in) :: t_CPU
+  integer, intent(in) :: n_CPU, ce_start, ce_end
+  logical, dimension(ce_start:ce_end), intent(in)  :: pending
+  logical, dimension(ce_start:ce_end), intent(out) :: ok
+
+  integer :: ph, en, i, n, N_s, N_st
+  real(C_DOUBLE) :: t_GPU
+  real(pREAL) :: j
+
+
+  ok = .false.
+  if (.not. allocated(GPU_handle)) return
+
+  do ph = 1, size(GPU_handle)
+    associate(w => GPU_work(ph))
+    if (.not. w%submitted) cycle
+    w%submitted = .false.
+    n    = size(w%ce_list)
+    N_s  = plasticState(ph)%sizeState
+    N_st = N_s + GPU_ndep(ph)
+    if (Metal_cpWait(Metal_ctx,int(GPU_handle(ph),C_INT),t_GPU) == 0) then
+      !$OMP PARALLEL DO PRIVATE(en,j)
+      do i = 1, n
+        en = material_entry_phase(1,w%ce_list(i))
+        if (allocated(GPU_tangent(ph)%valid)) GPU_tangent(ph)%valid(en) = w%stat(i) == 0
+        if (w%stat(i) /= 0) cycle
+        if (Metal_tangent) GPU_tangent(ph)%dPdF(1:3,1:3,1:3,1:3,en) = w%dPdF(1:3,1:3,1:3,1:3,i)
+        phase_mechanical_P(ph)%data(1:3,1:3,en)  = w%P(1:3,1:3,i)
+        phase_mechanical_S(ph)%data(1:3,1:3,en)  = w%S(1:3,1:3,i)
+        phase_mechanical_Fp(ph)%data(1:3,1:3,en) = w%Fp(1:3,1:3,i)
+        phase_mechanical_Fe(ph)%data(1:3,1:3,en) = w%Fe(1:3,1:3,i)
+        phase_mechanical_Lp(ph)%data(1:3,1:3,en) = w%Lp(1:3,1:3,i)
+        plasticState(ph)%state(1:N_s,en)         = w%state(1:N_s,i)
+        if (GPU_ndep(ph) > 0) call GPU_dependent(ph,en,w%state(1:N_s,i),w%state(N_s+1:N_st,i),.true.) ! of the last stress solve
+        if (mechanical_plasticity_type(ph) == MECHANICAL_PLASTICITY_TWINTRIP) then                  ! converged Li loop: Fi = j I
+          j = plastic_twintrip_GPUj(ph,en)
+          phase_mechanical_Fi(ph)%data(1:3,1:3,en) = j*math_I3
+          if (w%dt > 0.0_pREAL) &
+            phase_mechanical_Li(ph)%data(1:3,1:3,en) = math_I3*(1.0_pREAL - phase_mechanical_Fi0(ph)%data(1,1,en)/j)/w%dt
+        end if
+        ok(w%ce_list(i)) = .true.
+      end do
+      !$OMP END PARALLEL DO
+
+      if (GPU_verbose) print'(1x,a,i0,a,i0,a,i0,a,f8.2,a,f8.2,a,f6.3)', 'GPU split phase ',ph,': ',n,' GPU, ', &
+                             n_CPU,' CPU cells; t_GPU ',1.0e3_pREAL*t_GPU,' ms, t_CPU ',1.0e3_pREAL*t_CPU,' ms, share ',w%share
+      if (Metal_split < 0.0_pREAL .and. t_CPU > 0.0_pREAL .and. t_GPU > 0.0_C_DOUBLE) &           ! balance the wall times (GPU time is not
+        w%share = min(max(w%share*sqrt(t_CPU/real(t_GPU,pREAL)),0.02_pREAL),0.95_pREAL)             ! proportional to the points: latency bound)
+    end if
+    end associate
+  end do
+
+end subroutine phase_mechanical_constitutive_GPU_finish
+
+
+!--------------------------------------------------------------------------------------------------
+!> @brief Get (set = .false.) or set the dependent state of an entry (models that have one).
+!--------------------------------------------------------------------------------------------------
+subroutine GPU_dependent(ph,en,x,D,set)
+
+  integer, intent(in) :: ph, en
+  real(pREAL), dimension(:), intent(in) :: x                                                        ! state
+  real(pREAL), dimension(:), intent(inout) :: D
+  logical, intent(in) :: set
+
+
+  select case (mechanical_plasticity_type(ph))
+    case (MECHANICAL_PLASTICITY_DISLOTUNGSTEN)
+      call plastic_dislotungsten_GPUdependent(ph,en,D,set)
+    case (MECHANICAL_PLASTICITY_TDT)
+      if (.not. set) D = 0.0_pREAL                                                                  ! homogenized stiffness: computed on the GPU from the state
+    case (MECHANICAL_PLASTICITY_TWINTRIP)
+      call plastic_twintrip_GPUdependent(ph,en,D,set)
+  end select
+
+end subroutine GPU_dependent
+#endif
 
 end submodule mechanical

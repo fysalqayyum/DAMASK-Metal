@@ -75,6 +75,13 @@ module homogenization
     module subroutine damage_init()
     end subroutine damage_init
 
+#if defined(METAL) && defined(GRID)
+    module function mechanical_GPUeligible(ce) result(eligible)
+      integer, intent(in) :: ce
+      logical :: eligible
+    end function mechanical_GPUeligible
+#endif
+
     module subroutine mechanical_partition(subF,ce)
       real(pREAL), intent(in), dimension(3,3) :: &
         subF
@@ -267,53 +274,56 @@ subroutine homogenization_mechanical_response(status,Delta_t,cell_start,cell_end
     cell_start, cell_end
   integer :: &
     co, ce, ho, en
-  logical :: &
-    converged
-  logical, dimension(2) :: &
-    doneAndHappy
+#if defined(METAL) && defined(GRID)
+  logical, dimension(cell_start:cell_end) :: &
+    GPU_eligible, &                                                                                 !< single constituent, pass homogenization
+    GPU_pending, &                                                                                  !< being integrated on the GPU (concurrently with the CPU loop)
+    GPU_done                                                                                        !< mechanical response computed on GPU
+  integer(pI64) :: t0, t1, rate
+#endif
 
 
   status = STATUS_OK
-  !$OMP PARALLEL DO PRIVATE(en,ho,co,converged,doneAndHappy)
+
+#if defined(METAL) && defined(GRID)
+  !$OMP PARALLEL DO PRIVATE(en,ho)
   do ce = cell_start, cell_end
-
-    en = material_entry_homogenization(ce)
     ho = material_ID_homogenization(ce)
-
-    call phase_restore(ce) ! wrong name (is more a forward function)
-
-    if (homogState(ho)%sizeState > 0)  homogState(ho)%state(:,en) = homogState(ho)%state0(:,en)
-    if (damageState_h(ho)%sizeState > 0) damageState_h(ho)%state(:,en) = damageState_h(ho)%state0(:,en)
-    call damage_partition(ce)
-
-    doneAndHappy = [.false.,.true.]
-
-    convergenceLooping: do while (status == STATUS_OK .and. .not. doneAndHappy(1))
-
+    GPU_eligible(ce) = mechanical_GPUeligible(ce)
+    if (GPU_eligible(ce)) then                                                                      ! same preparation as in the loop below
+      en = material_entry_homogenization(ce)
+      call phase_restore(ce)
+      if (homogState(ho)%sizeState > 0)  homogState(ho)%state(:,en) = homogState(ho)%state0(:,en)
+      if (damageState_h(ho)%sizeState > 0) damageState_h(ho)%state(:,en) = damageState_h(ho)%state0(:,en)
+      call damage_partition(ce)
       call mechanical_partition(homogenization_F(1:3,1:3,ce),ce)
-      converged = all([(phase_mechanical_constitutive(Delta_t,co,ce) == STATUS_OK,co=1,homogenization_Nconstituents(ho))])
-      if (converged) then
-        doneAndHappy = mechanical_updateState(Delta_t,homogenization_F(1:3,1:3,ce),ce)
-        converged = all(doneAndHappy)
-      else
-        doneAndHappy = [.true.,.false.]
-      end if
-    end do convergenceLooping
-    if (.not. converged) then
-      if (status == STATUS_OK) &
-        call IO_warning(600,'mechanical response of cell', ce, 'on MPI rank', worldrank, emph=[2,4])
-      status = STATUS_FAIL_PHASE_MECHANICAL
-    end if
-    converged = converged .and. all([(phase_damage_constitutive(Delta_t,co,ce)==STATUS_OK,co=1,homogenization_Nconstituents(ho))])
-
-    if (.not. converged) then
-      if (status == STATUS_OK) then
-        call IO_warning(600,'damage response of cell', ce, 'on MPI rank', worldrank, emph=[2,4])
-        status = STATUS_FAIL_PHASE_DAMAGE
-      end if
     end if
   end do
   !$OMP END PARALLEL DO
+  call phase_mechanical_constitutive_GPU(Delta_t,cell_start,cell_end,GPU_eligible,GPU_pending)      ! queued, returns at once
+
+  call system_clock(t0,rate)
+  !$OMP PARALLEL DO
+  do ce = cell_start, cell_end
+    if (.not. GPU_pending(ce)) call cell_response(ce,.false.)
+  end do
+  !$OMP END PARALLEL DO
+  call system_clock(t1)
+
+  call phase_mechanical_constitutive_GPU_finish(real(t1-t0,pREAL)/real(rate,pREAL),count(.not. GPU_pending), &
+                                                cell_start,cell_end,GPU_pending,GPU_done)
+  !$OMP PARALLEL DO
+  do ce = cell_start, cell_end
+    if (GPU_pending(ce)) call cell_response(ce,GPU_done(ce))                                        ! points the GPU did not integrate: CPU
+  end do
+  !$OMP END PARALLEL DO
+#else
+  !$OMP PARALLEL DO
+  do ce = cell_start, cell_end
+    call cell_response(ce,.false.)
+  end do
+  !$OMP END PARALLEL DO
+#endif
 
   if (status /= STATUS_OK) return
 
@@ -326,6 +336,63 @@ subroutine homogenization_mechanical_response(status,Delta_t,cell_start,cell_end
       call mechanical_homogenize(Delta_t,ce)
   end do
   !$OMP END PARALLEL DO
+
+  contains
+
+  !------------------------------------------------------------------------------------------------
+  !> @brief Mechanical and damage response of one cell (mechanical part skipped if done on the GPU).
+  !------------------------------------------------------------------------------------------------
+  subroutine cell_response(ce,done_on_GPU)
+
+    integer, intent(in) :: ce
+    logical, intent(in) :: done_on_GPU
+
+    integer :: co, en, ho
+    logical :: converged
+    logical, dimension(2) :: doneAndHappy
+
+
+    en = material_entry_homogenization(ce)
+    ho = material_ID_homogenization(ce)
+
+    if (done_on_GPU) then
+      converged = .true.                                                                            ! pass: mechanical_updateState is always done and happy
+    else
+      call phase_restore(ce) ! wrong name (is more a forward function)
+
+      if (homogState(ho)%sizeState > 0)  homogState(ho)%state(:,en) = homogState(ho)%state0(:,en)
+      if (damageState_h(ho)%sizeState > 0) damageState_h(ho)%state(:,en) = damageState_h(ho)%state0(:,en)
+      call damage_partition(ce)
+
+      doneAndHappy = [.false.,.true.]
+
+      convergenceLooping: do while (status == STATUS_OK .and. .not. doneAndHappy(1))
+
+        call mechanical_partition(homogenization_F(1:3,1:3,ce),ce)
+        converged = all([(phase_mechanical_constitutive(Delta_t,co,ce) == STATUS_OK,co=1,homogenization_Nconstituents(ho))])
+        if (converged) then
+          doneAndHappy = mechanical_updateState(Delta_t,homogenization_F(1:3,1:3,ce),ce)
+          converged = all(doneAndHappy)
+        else
+          doneAndHappy = [.true.,.false.]
+        end if
+      end do convergenceLooping
+      if (.not. converged) then
+        if (status == STATUS_OK) &
+          call IO_warning(600,'mechanical response of cell', ce, 'on MPI rank', worldrank, emph=[2,4])
+        status = STATUS_FAIL_PHASE_MECHANICAL
+      end if
+    end if
+    converged = converged .and. all([(phase_damage_constitutive(Delta_t,co,ce)==STATUS_OK,co=1,homogenization_Nconstituents(ho))])
+
+    if (.not. converged) then
+      if (status == STATUS_OK) then
+        call IO_warning(600,'damage response of cell', ce, 'on MPI rank', worldrank, emph=[2,4])
+        status = STATUS_FAIL_PHASE_DAMAGE
+      end if
+    end if
+
+  end subroutine cell_response
 
 end subroutine homogenization_mechanical_response
 

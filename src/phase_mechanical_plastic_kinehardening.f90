@@ -465,4 +465,49 @@ pure subroutine kinetics(Mp,ph,en, &
 
 end subroutine kinetics
 
+#if defined(METAL) && defined(GRID)
+!--------------------------------------------------------------------------------------------------
+!> @brief Upload the model of a phase to the GPU constitutive kernel (src/grid/metal/cp_core.h).
+!> @details Supported: up to 48 slip systems, Schmid law. State layout as plasticState%state:
+!> [xi, chi, gamma | sgn_gamma, chi_flip, gamma_flip]; the delta state is applied on the GPU after
+!> convergence of the state integration, as plastic_kinehardening_deltaState.
+!> Returns the GPU handle or a negative number if the phase stays on the CPU.
+!--------------------------------------------------------------------------------------------------
+module function plastic_kinehardening_GPUadd(ph,C66,numerics) result(handle)
+
+  integer, intent(in) :: ph
+  real(pREAL), dimension(6,6), intent(in) :: C66
+  real(pREAL), dimension(7), intent(in) :: numerics
+  integer :: handle
+
+  character(len=:), allocatable :: reason
+
+
+  handle = -1
+  associate(prm => param(ph))
+    if (prm%sum_N_sl == 0 .or. prm%sum_N_sl > 48) then
+      reason = 'number of slip systems'
+    elseif (any(dNeq(prm%P_nS_pos,prm%P)) .or. any(dNeq(prm%P_nS_neg,-prm%P))) then
+      reason = 'non-Schmid law'
+    else
+      handle = Metal_cpAddPhaseModel(Metal_ctx,2_C_INT,int(prm%sum_N_sl,C_INT),C66, &
+                                     prm%P,prm%P_nS_pos,prm%P_nS_neg,prm%h_sl_sl, &
+                                     [prm%dot_gamma_0,prm%n,prm%h_0_xi,prm%h_0_chi, &
+                                      prm%h_inf_xi,prm%h_inf_chi,prm%xi_inf,prm%chi_inf], &
+                                     [plasticState(ph)%atol(indexDotState(ph)%xi(1)), &
+                                      plasticState(ph)%atol(indexDotState(ph)%gamma(1))],numerics)
+      reason = 'GPU initialization failed'
+    end if
+  end associate
+
+  if (handle >= 0) then
+    print'(/,1x,a,i0,a)', 'phase ',ph,': kinehardening constitutive update on GPU'
+  else
+    print'(/,1x,a,i0,a)', 'phase ',ph,': kinehardening constitutive update on CPU ('//reason//')'
+  end if
+  flush(IO_STDOUT)
+
+end function plastic_kinehardening_GPUadd
+#endif
+
 end submodule kinehardening

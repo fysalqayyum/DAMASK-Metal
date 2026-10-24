@@ -88,6 +88,24 @@ module subroutine mechanical_init()
 end subroutine mechanical_init
 
 
+#if defined(METAL) && defined(GRID)
+!--------------------------------------------------------------------------------------------------
+!> @brief Whether the mechanical response of a cell can be computed by the GPU batch: one
+!> constituent and pass homogenization (partitioning trivial, updateState always done and happy).
+!--------------------------------------------------------------------------------------------------
+module function mechanical_GPUeligible(ce) result(eligible)
+
+  integer, intent(in) :: ce
+  logical :: eligible
+
+
+  eligible = homogenization_Nconstituents(material_ID_homogenization(ce)) == 1 &
+       .and. mechanical_type(material_ID_homogenization(ce)) == MECHANICAL_PASS_ID
+
+end function mechanical_GPUeligible
+#endif
+
+
 !--------------------------------------------------------------------------------------------------
 !> @brief Partition F onto the individual constituents.
 !--------------------------------------------------------------------------------------------------
