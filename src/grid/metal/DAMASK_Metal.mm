@@ -93,7 +93,8 @@ struct Context {
   std::vector<int>            cp_job_rc;                                                            // return code of the last asynchronous job per phase
   std::vector<double>         cp_job_time;                                                          // its wall time [s] (submission to completion)
                                                                                                     // (sized when phases are added: no reallocation while jobs run)
-  size_t                      cp_chunk = 16384;                                                     // points per command buffer (bounds GPU submission time)
+  size_t                      cp_chunk = 16384;                                                     // points per command buffer (bounds GPU submission time;
+                                                                                                    // larger: no gain end to end; env DAMASK_METAL_CP_CHUNK)
   NSUInteger                  cp_tg = 32;                                                           // threads per threadgroup (pipeline hint)
 };
 
@@ -265,6 +266,7 @@ bool cp_init(Context* ctx, const char* src) {
   if (ctx->cp_failed || !src) return false;
   ctx->cp_failed = true;
   if (getenv("DAMASK_METAL_CP_TG")) ctx->cp_tg = NSUInteger(std::max(1, atoi(getenv("DAMASK_METAL_CP_TG"))));
+  if (getenv("DAMASK_METAL_CP_CHUNK")) ctx->cp_chunk = size_t(std::max(256, atoi(getenv("DAMASK_METAL_CP_CHUNK"))));
   NSError* err = nil;
   id<MTLLibrary> lib = compile_msl(ctx->device, src, &err);
   if (!lib) {
@@ -382,33 +384,41 @@ void cp_pack(const CPBuffers& buf, size_t m, size_t off, const CPPhase& ph, cons
   const bool mapped = !ph.smap.empty();
   const int NS = mapped ? int(ph.smap.size()) : M::FLAT ? M::ND + M::NY + M::NDEP : (M::NBX + M::NBY + M::NBD) * N; // DAMASK state (+ dependent state) per point
   df64* in = static_cast<df64*>(buf.in.contents);
-  parallel_for(m, [&](size_t b, size_t e) {
-    for (size_t j = b; j < e; ++j) {
-      size_t i = off + j;
-      for (int k = 0; k < 9; ++k) {
-        in[(L::F+k)*m + j]   = to_df(F[9*i+k]);
-        in[(L::Fp0+k)*m + j] = to_df(Fp0[9*i+k]);
-        in[(L::Lp0+k)*m + j] = to_df(Lp_guess[9*i+k]);
-      }
-      const double* s = S0 + 9*i;                                                                   // (3,3) -> Voigt 11,22,33,23,13,12
-      const double sv[6] = {s[0], s[4], s[8], s[CP_IDX(1,2)], s[CP_IDX(0,2)], s[CP_IDX(0,1)]};
-      for (int k = 0; k < 6; ++k) in[(L::S0+k)*m + j] = to_df(sv[k]);
-      if (mapped) {
-        for (int c = 0; c < M::ND + M::NY + M::NDEP; ++c) in[(L::X0+c)*m + j] = to_df(ph.sinit[c]);
-        for (int q = 0; q < NS; ++q) in[(L::X0+ph.smap[q])*m + j] = to_df(state0[NS*i + q]);
-      } else if (M::FLAT)
-        for (int q = 0; q < NS; ++q) in[(L::X0+q)*m + j] = to_df(state0[NS*i + q]);
-      else
-        for (int blk = 0; blk < M::NBX + M::NBY + M::NBD; ++blk) {
-          int grp = blk < M::NBX ? 0 : blk < M::NBX + M::NBY ? 1 : 2;
-          int b0  = grp == 0 ? blk : grp == 1 ? blk - M::NBX : blk - M::NBX - M::NBY;
-          int base = (grp == 0 ? L::X0 : grp == 1 ? L::Y0 : L::D0) + b0*M::N;
-          double pad = M::pad_value(grp, b0);
-          for (int q = 0; q < M::N; ++q)
-            in[(base+q)*m + j] = to_df(q < N ? state0[NS*i + blk*N + q] : pad);
-        }
-      in[L::T*m + j] = to_df(T ? T[i] : 0.0);
+  std::vector<int> c_init;                                                                          // mapped models: components not set from DAMASK's state
+  std::vector<df64> v_init;
+  if (mapped) {
+    std::vector<bool> set(M::ND + M::NY + M::NDEP, false);
+    for (int q = 0; q < NS; ++q) set[ph.smap[q]] = true;
+    for (int c = 0; c < M::ND + M::NY + M::NDEP; ++c)
+      if (!set[c]) { c_init.push_back(c); v_init.push_back(to_df(ph.sinit[c])); }
+  }
+  parallel_for(m, [&](size_t b, size_t e) {                                                         // component-outer: contiguous writes
+    for (int k = 0; k < 9; ++k) {
+      for (size_t j = b; j < e; ++j) in[(L::F+k)*m + j]   = to_df(F[9*(off+j)+k]);
+      for (size_t j = b; j < e; ++j) in[(L::Fp0+k)*m + j] = to_df(Fp0[9*(off+j)+k]);
+      for (size_t j = b; j < e; ++j) in[(L::Lp0+k)*m + j] = to_df(Lp_guess[9*(off+j)+k]);
     }
+    const int sv[6] = {0, 4, 8, CP_IDX(1,2), CP_IDX(0,2), CP_IDX(0,1)};                            // (3,3) -> Voigt 11,22,33,23,13,12
+    for (int k = 0; k < 6; ++k)
+      for (size_t j = b; j < e; ++j) in[(L::S0+k)*m + j] = to_df(S0[9*(off+j) + sv[k]]);
+    if (mapped) {
+      for (size_t c = 0; c < c_init.size(); ++c)
+        for (size_t j = b; j < e; ++j) in[(L::X0+c_init[c])*m + j] = v_init[c];
+      for (int q = 0; q < NS; ++q)
+        for (size_t j = b; j < e; ++j) in[(L::X0+ph.smap[q])*m + j] = to_df(state0[NS*(off+j) + q]);
+    } else if (M::FLAT) {
+      for (int q = 0; q < NS; ++q)
+        for (size_t j = b; j < e; ++j) in[(L::X0+q)*m + j] = to_df(state0[NS*(off+j) + q]);
+    } else
+      for (int blk = 0; blk < M::NBX + M::NBY + M::NBD; ++blk) {
+        int grp = blk < M::NBX ? 0 : blk < M::NBX + M::NBY ? 1 : 2;
+        int b0  = grp == 0 ? blk : grp == 1 ? blk - M::NBX : blk - M::NBX - M::NBY;
+        int base = (grp == 0 ? L::X0 : grp == 1 ? L::Y0 : L::D0) + b0*M::N;
+        const df64 pad = to_df(M::pad_value(grp, b0));
+        for (int q = 0; q < M::N; ++q)
+          for (size_t j = b; j < e; ++j) in[(base+q)*m + j] = q < N ? to_df(state0[NS*(off+j) + blk*N + q]) : pad;
+      }
+    for (size_t j = b; j < e; ++j) in[L::T*m + j] = to_df(T ? T[off+j] : 0.0);
   });
 }
 
