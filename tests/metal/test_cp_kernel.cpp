@@ -268,5 +268,8 @@ int main() {
   printf("  S-formulation float  : max %.2e   Newton its %ld\n", err_f, it_f);
   printf("  failures: ref %d double %d df64 %d float %d\n", fail_ref, fail_d, fail_df, fail_f);
   printf("  tangent dP/dF vs finite differences (incl. state change): rel %.2e\n", err_tan);
-  return 0;
+  // float is reported only (the GPU uses df64 where accuracy demands it)
+  const bool ok = err_d < 1e-10 && err_df < 1e-9 && fail_ref + fail_d + fail_df == 0 && err_tan < 1e-2;
+  printf("%s\n", ok ? "OK" : "FAIL");
+  return ok ? 0 : 1;
 }

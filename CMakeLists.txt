@@ -321,3 +321,8 @@ if(TEST)
   set_tests_properties(fortran.unit PROPERTIES WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
   add_subdirectory(tests/unit_cpp)
 endif()
+
+if(METAL)
+  enable_testing()
+  add_subdirectory(tests/metal)
+endif()
