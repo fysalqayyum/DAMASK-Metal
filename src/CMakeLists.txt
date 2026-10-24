@@ -31,6 +31,21 @@ foreach(VARIANT GRID MESH TEST)
 
     file(GLOB damask_fortran CONFIGURE_DEPENDS *.f90 ${variant_path}/*.f90)
     file(GLOB damask_c CONFIGURE_DEPENDS *.c *.cpp ${variant_path}/*.c ${variant_path}/*.cpp)
+    if(METAL AND VARIANT STREQUAL "GRID")
+      set(msl_dir ${CMAKE_CURRENT_SOURCE_DIR}/grid/metal)
+      set(msl_sources ${msl_dir}/spectral.metal)
+      set(msl_sources_cp ${msl_dir}/cp_gpu_config.h ${msl_dir}/df64.h ${msl_dir}/cp_kernel.h ${msl_dir}/cp_slim.h ${msl_dir}/cp_core.h ${msl_dir}/cp_models_composite.h ${msl_dir}/cp.metal)               # dependency order
+      string(REPLACE ";" "|" msl_sources_arg "${msl_sources}")
+      string(REPLACE ";" "|" msl_sources_cp_arg "${msl_sources_cp}")
+      set(msl_header ${CMAKE_CURRENT_BINARY_DIR}/metal/metal_sources.h)
+      add_custom_command(OUTPUT ${msl_header}
+        COMMAND ${CMAKE_COMMAND} -DOUT=${msl_header} -DIN=${msl_sources_arg} -DIN_CP=${msl_sources_cp_arg}
+                -P ${PROJECT_SOURCE_DIR}/cmake/EmbedMetal.cmake
+        DEPENDS ${msl_sources} ${msl_sources_cp} ${PROJECT_SOURCE_DIR}/cmake/EmbedMetal.cmake
+        COMMENT "Embedding Metal shader sources"
+        VERBATIM)
+      list(APPEND damask_c ${CMAKE_CURRENT_SOURCE_DIR}/grid/metal/DAMASK_Metal.mm ${msl_header})
+    endif()
 
     if(NOT CMAKE_BUILD_TYPE STREQUAL "SYNTAXONLY")
       add_library(damask_fortran_${VARIANT_LOWER} OBJECT ${damask_fortran})
@@ -49,6 +64,16 @@ foreach(VARIANT GRID MESH TEST)
         add_compile_definitions(BOOST)
       endif()
       target_link_libraries(${executable_name} PRIVATE damask_c_${VARIANT_LOWER})
+      if(METAL AND VARIANT STREQUAL "GRID")
+        target_include_directories(damask_c_${VARIANT_LOWER} PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/metal ${msl_dir})
+        # DAMASK's build types set no flags for OBJCXX: optimise explicitly (host packing/certificate are hot);
+        # no FP contraction, as validated in tests/metal
+        target_compile_options(damask_c_${VARIANT_LOWER} PRIVATE
+          $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc -O3 -ffp-contract=off -std=c++17>)
+        target_link_libraries(${executable_name} PRIVATE
+          "-framework Foundation" "-framework Metal"
+          "-framework MetalPerformanceShaders" "-framework MetalPerformanceShadersGraph" objc)
+      endif()
       target_link_directories(${executable_name} PRIVATE ${PETSC_LIBRARY_DIRS})
       target_link_libraries(${executable_name} PRIVATE
         ${PETSC_LIBRARIES}

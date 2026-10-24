@@ -28,6 +28,9 @@ module spectral_utilities
   use discretization_grid
   use discretization
   use homogenization
+#ifdef METAL
+  use Metal
+#endif
 
 #ifndef PETSC_EXPOSES_MPIF90
   implicit none(type,external)
@@ -59,6 +62,12 @@ module spectral_utilities
   complex(pREAL),            dimension(:,:,:,:),       allocatable :: xi1st                         !< wave vector field for first derivatives
   complex(pREAL),            dimension(:,:,:,:),       allocatable :: xi2nd                         !< wave vector field for second derivatives
   real(pREAL),               dimension(3,3,3,3)                    :: C_ref                         !< mechanic reference stiffness
+#ifdef METAL
+  type(C_PTR) :: GPU = C_NULL_PTR                                                                   !< Metal backend (single rank)
+  logical :: &
+    GPU_Gamma  = .false., &                                                                         !< Gamma convolution on GPU
+    GPU_verify = .false.                                                                            !< also compute on CPU and report difference
+#endif
 
 !--------------------------------------------------------------------------------------------------
 ! plans for FFTW
@@ -140,6 +149,11 @@ subroutine spectral_utilities_init(active_Gamma, active_G, active_parabolic)
     num_solver, &
     num_grid, &
     num_grid_fft
+#ifdef METAL
+  type(tDict), pointer :: num_grid_GPU
+  character(len=:), allocatable :: GPU_precision
+  character(len=256,kind=C_CHAR) :: deviceName
+#endif
 
   print'(/,1x,a)', '<<<+-  spectral_utilities init  -+>>>'
 
@@ -328,6 +342,53 @@ subroutine spectral_utilities_init(active_Gamma, active_G, active_parabolic)
             endwhere
   end do; end do; end do
 
+#ifdef METAL
+  num_grid_GPU => num_grid%get_dict('GPU',defaultVal=emptyDict)
+  GPU_Gamma  = active_Gamma .and. worldsize == 1 .and. num_grid_GPU%get_asBool('Gamma',defaultVal=.true.)
+  GPU_verify = num_grid_GPU%get_asBool('verify',defaultVal=.false.)
+  Metal_constitutive = worldsize == 1 .and. num_grid_GPU%get_asBool('constitutive',defaultVal=.true.)
+  Metal_rtol_S = num_grid_GPU%get_asReal('eps_rel_S',defaultVal=1.0e-10_pREAL)
+  Metal_tangent = Metal_constitutive .and. num_grid_GPU%get_asBool('tangent',defaultVal=.true.)
+  Metal_nState  = num_grid_GPU%get_asInt('N_iter_state_max',defaultVal=-1)                          ! -1: per model (see GPU_setup)
+  if (Metal_nState < 1 .and. Metal_nState /= -1) error stop 'GPU N_iter_state_max < 1'
+  block
+    character(len=:), allocatable :: v
+    v = num_grid_GPU%get_asStr('split',defaultVal='1.0')                                            ! share of the GPU-capable cells on the GPU (rest on the CPU, concurrently)
+    if (v == 'auto') then
+      Metal_split = -1.0_pREAL
+    else
+      Metal_split = num_grid_GPU%get_asReal('split',defaultVal=1.0_pREAL)
+      if (Metal_split < 0.0_pREAL .or. Metal_split > 1.0_pREAL) error stop 'GPU split not in [0,1] or auto'
+    end if
+    GPU_precision = num_grid_GPU%get_asStr('precision',defaultVal='fast')                           ! fast | mixed | df64, see DAMASK_Metal.h
+    select case (GPU_precision)
+      case ('df64');  call Metal_cpSetPrecision(0)
+      case ('mixed'); call Metal_cpSetPrecision(1)
+      case ('fast');  call Metal_cpSetPrecision(2)
+      case default;   error stop 'GPU precision not fast, mixed, or df64'
+    end select
+  end block
+  if (GPU_Gamma .or. Metal_constitutive) then
+    GPU = Metal_new(int(cells(1),C_INT),int(cells(2),C_INT),int(cells(3),C_INT))
+    if (c_associated(GPU)) then
+      Metal_ctx = GPU
+      if (Metal_setXi(GPU,xi1st) /= 0) error stop 'Metal: setting wave vectors failed'
+      call Metal_deviceName(GPU,deviceName,len(deviceName,C_INT))
+      print'(/,1x,a)', 'Metal GPU: '//trim(deviceName)
+      if (GPU_Gamma)          print'(1x,a)', '  Gamma convolution on GPU (FP32)'
+      if (Metal_constitutive) print'(1x,a)', '  constitutive update on GPU where supported (precision: ' &
+                                             //GPU_precision//', split: '//merge('auto ','fixed',Metal_split < 0.0_pREAL)//')'
+      if (Metal_tangent)      print'(1x,a)', '  tangent dP/dF of GPU-integrated points on GPU (FP32)'
+      if (GPU_verify)         print'(1x,a)', '  Gamma convolution verified against CPU'
+    else
+      GPU_Gamma = .false.
+      Metal_constitutive = .false.
+      Metal_tangent = .false.
+      print'(/,1x,a)', 'Metal GPU not available, running on CPU'
+    end if
+  end if
+#endif
+
   if (active_Gamma) then
     if (num%memory_efficient) then                                                                  ! allocate just single fourth order tensor
       allocate (Gamma_hat(3,3,3,3,1,1,1), source = cmplx(0.0_pREAL,0.0_pREAL,pREAL))
@@ -362,6 +423,11 @@ subroutine utilities_updateGamma(C)
 
 
   C_ref = C/wgt
+#ifdef METAL
+  if (GPU_Gamma) then
+    if (Metal_setCRef(GPU,C_ref) /= 0) error stop 'Metal: setting reference stiffness failed'
+  end if
+#endif
 
   if (.not. num%memory_efficient) then
     Gamma_hat = cmplx(0.0_pREAL,0.0_pREAL,pREAL)                                                    ! for the singular point and any non invertible A
@@ -407,10 +473,21 @@ function utilities_GammaConvolution(field, fieldAim) result(gammaField)
     i, j, k, &
     l, m, n, o
   logical :: err
+#ifdef METAL
+  real(pREAL), dimension(:,:,:,:,:), allocatable :: gammaField_GPU
+#endif
 
 
   print'(/,1x,a)', '... doing gamma convolution ...............................................'
   flush(IO_STDOUT)
+
+#ifdef METAL
+  if (GPU_Gamma) then
+    if (Metal_GammaConvolution(GPU,field,fieldAim,gammaField) /= 0) error stop 'Metal: Gamma convolution failed'
+    if (.not. GPU_verify) return
+    gammaField_GPU = gammaField
+  end if
+#endif
 
   tensorField_real(1:3,1:3,cells(1)+1:cells1Red*2,1:cells(2),1:cells3) = 0.0_pREAL
   tensorField_real(1:3,1:3,1:cells(1),            1:cells(2),1:cells3) = field
@@ -459,6 +536,12 @@ function utilities_GammaConvolution(field, fieldAim) result(gammaField)
 
   call fftw_mpi_execute_dft_c2r(planTensorBack,tensorField_fourier,tensorField_real)
   gammaField = tensorField_real(1:3,1:3,1:cells(1),1:cells(2),1:cells3)
+
+#ifdef METAL
+  if (GPU_Gamma .and. GPU_verify) &
+    print'(1x,a,es9.2)', 'GPU vs CPU Gamma convolution, relative L2 difference: ', &
+                         norm2(gammaField_GPU-gammaField)/max(norm2(gammaField),tiny(1.0_pREAL))
+#endif
 
 end function utilities_GammaConvolution
 

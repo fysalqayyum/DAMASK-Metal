@@ -46,6 +46,17 @@ project(DAMASK
         LANGUAGES Fortran C CXX VERSION "${DAMASK_VERSION_CMAKE}")
 
 set(CMAKE_Fortran_PREPROCESS "ON")
+
+# Apple GPU (Metal) backend for the grid solver
+if(APPLE)
+  option(METAL "Use the Apple GPU (Metal) in the grid solver" ON)
+else()
+  set(METAL OFF)
+endif()
+if(METAL)
+  enable_language(OBJCXX)
+  add_compile_definitions(METAL)
+endif()
 # https://gitlab.kitware.com/cmake/community/-/wikis/doc/cmake/RPATH-handling
 set(CMAKE_MACOSX_RPATH TRUE)
 set(CMAKE_SKIP_BUILD_RPATH TRUE)
