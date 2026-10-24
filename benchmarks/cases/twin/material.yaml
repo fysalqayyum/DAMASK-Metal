@@ -1,0 +1,277 @@
+homogenization:
+  SX:
+    N_constituents: 1
+    mechanical:
+      type: pass
+material:
+- constituents:
+  - O:
+    - 1.0
+    - 0.0
+    - 0.0
+    - 0.0
+    phase: TWIP
+    v: 1.0
+  homogenization: SX
+- constituents:
+  - O:
+    - 0.7936696712125002
+    - -0.28765777461664166
+    - -0.3436487135089419
+    - 0.4113964260949434
+    phase: TWIP
+    v: 1.0
+  homogenization: SX
+- constituents:
+  - O:
+    - 0.3986143167493579
+    - -0.7014883552495493
+    - 0.2154871765709027
+    - 0.5500781677772945
+    phase: TWIP
+    v: 1.0
+  homogenization: SX
+- constituents:
+  - O:
+    - 0.28645844315788244
+    - -0.022571491243423537
+    - -0.467933059311115
+    - -0.8357456192708106
+    phase: TWIP
+    v: 1.0
+  homogenization: SX
+- constituents:
+  - O:
+    - 0.33012772942625784
+    - -0.6781865350268957
+    - 0.6494525351030648
+    - 0.09638521992649676
+    phase: TWIP
+    v: 1.0
+  homogenization: SX
+- constituents:
+  - O:
+    - 0.43596817439583935
+    - -0.5982537129781701
+    - 0.046599032277502436
+    - 0.6707106499919265
+    phase: TWIP
+    v: 1.0
+  homogenization: SX
+- constituents:
+  - O:
+    - 0.169734823419553
+    - -0.699615227367322
+    - -0.6059581215838098
+    - -0.33844257746495854
+    phase: TWIP
+    v: 1.0
+  homogenization: SX
+- constituents:
+  - O:
+    - 0.9698864809294915
+    - 0.1729052643205874
+    - -0.15948307917616958
+    - 0.06315956884687175
+    phase: TWIP
+    v: 1.0
+  homogenization: SX
+- constituents:
+  - O:
+    - 0.46205660912967883
+    - 0.3105054068891252
+    - -0.617849551030653
+    - 0.555294529545738
+    phase: TWIP
+    v: 1.0
+  homogenization: SX
+- constituents:
+  - O:
+    - 0.4512443497461787
+    - -0.7636045534540555
+    - -0.04739348426715133
+    - -0.45939142396805815
+    phase: TWIP
+    v: 1.0
+  homogenization: SX
+- constituents:
+  - O:
+    - 0.2161856212656443
+    - -0.6581450184826598
+    - -0.5498086209601588
+    - 0.4667112513346289
+    phase: TWIP
+    v: 1.0
+  homogenization: SX
+- constituents:
+  - O:
+    - 0.8753220715350803
+    - -0.4561599367657419
+    - -0.13298279533852678
+    - -0.08969369719975541
+    phase: TWIP
+    v: 1.0
+  homogenization: SX
+- constituents:
+  - O:
+    - 0.11908260752431069
+    - 0.18266024809834172
+    - -0.7144822594012615
+    - -0.664807992845101
+    phase: TWIP
+    v: 1.0
+  homogenization: SX
+- constituents:
+  - O:
+    - 0.751104669484278
+    - 0.5585633382623958
+    - -0.34579336397009175
+    - 0.06538900566860861
+    phase: TWIP
+    v: 1.0
+  homogenization: SX
+- constituents:
+  - O:
+    - 0.08740438971703973
+    - 0.8991264096610437
+    - -0.4156704205935976
+    - 0.10559485570696363
+    phase: TWIP
+    v: 1.0
+  homogenization: SX
+- constituents:
+  - O:
+    - 0.5584325870096193
+    - 0.6016408353068798
+    - -0.14280340445801173
+    - 0.5529814994483859
+    phase: TWIP
+    v: 1.0
+  homogenization: SX
+- constituents:
+  - O:
+    - 0.4052725440888093
+    - 0.25253073423599154
+    - 0.5693263597910454
+    - -0.669215876471182
+    phase: TWIP
+    v: 1.0
+  homogenization: SX
+- constituents:
+  - O:
+    - 0.7570164606888676
+    - 0.15265448024694664
+    - -0.5998021466848317
+    - 0.20942796551297105
+    phase: TWIP
+    v: 1.0
+  homogenization: SX
+- constituents:
+  - O:
+    - 0.6987659297138081
+    - -0.132172211261028
+    - -0.19693254724422338
+    - 0.6748883269678543
+    phase: TWIP
+    v: 1.0
+  homogenization: SX
+- constituents:
+  - O:
+    - 0.7729330445886478
+    - 0.21682179052722322
+    - -0.5207379472917645
+    - 0.2905078484066341
+    phase: TWIP
+    v: 1.0
+  homogenization: SX
+phase:
+  TWIP:
+    lattice: cF
+    mechanical:
+      elastic:
+        C_11: 175000000000.0
+        C_12: 115000000000.0
+        C_44: 135000000000.0
+        type: Hooke
+      output:
+      - F
+      - P
+      plastic:
+        B:
+        - 0.001
+        D: 5.0e-05
+        D_a: 2.0
+        Gamma_sf: 0.02833
+        Gamma_sf,T: 0.0001214
+        Gamma_sf,T^2: 1.473e-07
+        L_tw: 1.91e-07
+        N_sl:
+        - 12
+        N_tw:
+        - 12
+        Q_cl: 3.0e-19
+        Q_sl:
+        - 3.5e-19
+        T_ref: 293.15
+        V_cs: 1.67e-29
+        a_sl_tw:
+        - 2.0
+        b_sl:
+        - 2.56e-10
+        b_tw:
+        - 1.47e-10
+        dot_gamma_0_sl_tw:
+        - 0.001
+        elastic_mixing: Reuss
+        f_edge:
+        - 1.0
+        h_0_sl_tw:
+        - 1000000000.0
+        h_sl-sl:
+        - 0.122
+        - 0.122
+        - 0.625
+        - 0.07
+        - 0.137
+        - 0.137
+        - 0.122
+        h_sl-tw:
+        - 1.0
+        - 1.0
+        - 1.0
+        h_tw-tw:
+        - 1.0
+        - 1.0
+        i_sl:
+        - 30.0
+        i_tw: 10.0
+        n_sl_tw:
+        - 20
+        output:
+        - rho_mob
+        - gamma_sl
+        - f_tw
+        - xi_sl_tw
+        - gamma_sl_tw
+        p_sl:
+        - 0.325
+        p_tw:
+        - 7
+        q_sl:
+        - 1.55
+        rho_dip_0:
+        - 50000000000.0
+        rho_mob_0:
+        - 50000000000.0
+        t_tw:
+        - 5.0e-08
+        tau_0:
+        - 550000000.0
+        type: twintrip
+        v_0:
+        - 1400.0
+        x_c: 1.0e-09
+        xi_0_sl_tw:
+        - 400000000.0
+        xi_inf_sl_tw:
+        - 800000000.0

@@ -1,0 +1,40 @@
+# DAMASK-Metal benchmark, 2026-10-24: Apple M6 Mac mini (12 CPU cores: 2 super + 4 performance +
+# 6 efficiency; 12 GPU cores; 16 GB), macOS 27 (Darwin 27.0.0), gfortran 16.2, PETSc 3.25.6.
+# CPU: FP64 constitutive update, FFTW, OMP_NUM_THREADS=12. GPU: Metal, fast precision (default).
+# Produced with benchmarks/run_benchmarks.sh <grid>; 64^3: pheno full, others first 10 increments;
+# trip not run at 64^3. tdt GPU rows: after the certificate switch-on fix and state cap 20.
+case grid variant wall_s increments newton_its gpu_points to_cpu_pct rejected max_rss_MB exit
+pheno 16 cpu 2.50 40 166 0 - - 80 0
+pheno 16 gpu 1.20 40 167 1536000 0.000 0 102 0
+phenotw 16 cpu 5.02 40 174 0 - - 82 0
+phenotw 16 gpu 2.25 40 174 1593344 0.000 0 109 0
+dtung 16 cpu 6.29 20 132 0 - - 82 0
+dtung 16 gpu 3.47 20 125 1110016 10.881 0 109 0
+tdt 16 cpu 92.65 40 318 0 - - 90 0
+twin 16 cpu 190.76 60 1044 0 - - 84 0
+twin 16 gpu 54.82 60 1266 21704704 0.104 0 119 0
+trip 16 cpu 384.85 60 1607 0 - - 87 0
+trip 16 gpu 119.14 60 1912 27443200 0.343 2 127 0
+pheno 32 cpu 20.85 40 166 0 - - 315 0
+pheno 32 gpu 5.93 40 168 12353536 0.000 0 415 0
+phenotw 32 cpu 41.52 40 179 0 - - 341 0
+phenotw 32 gpu 9.80 40 178 13008896 0.000 0 485 0
+dtung 32 cpu 56.31 20 145 0 - - 338 0
+dtung 32 gpu 25.96 20 136 9601024 11.321 0 482 0
+tdt 32 cpu 1119.22 40 428 0 - - 417 0
+twin 32 cpu 1683.61 60 1261 0 - - 359 0
+twin 32 gpu 382.17 60 1502 221347840 0.085 5 572 0
+trip 32 cpu 3308.30 60 1963 0 - - 379 0
+trip 32 gpu 841.95 60 2301 265519104 0.326 25 641 0
+pheno 64 cpu 161.56 40 166 0 - - 2278 0
+pheno 64 gpu 50.68 40 167 98304000 0.000 0 2717 0
+phenotw 64 cpu 100.89 10 56 0 - - 2423 0
+phenotw 64 gpu 29.32 10 56 32243712 0.000 0 3077 0
+dtung 64 cpu 44.74 10 40 0 - - 2404 0
+dtung 64 gpu 22.28 10 40 23855104 0.611 0 3055 0
+tdt 64 cpu 476.13 10 57 0 - - 3042 0
+twin 64 cpu 1002.36 10 198 0 - - 2572 0
+twin 64 gpu 244.14 10 240 128712704 0.065 0 3530 0
+tdt 16 gpu 48.54 40 322 8904704 0.589 1270 134 0
+tdt 32 gpu 347.57 40 426 96632832 0.713 10937 694 0
+tdt 64 gpu 114.95 10 56 32243712 1.123 88655 4250 0
