@@ -8,6 +8,11 @@ set(_OPTIMIZATION_DEBUG      "-Og")
 set(_OPTIMIZATION_OFF        "-O0")
 set(_OPTIMIZATION_DEFENSIVE  "-O2 -mtune=native")
 set(_OPTIMIZATION_AGGRESSIVE "-O3 -march=native -funroll-loops -ftree-vectorize -flto")
+if(APPLE)
+  # GCC LTO cannot use Apple's ld64 plugin interface: Fortran bind(C) callbacks referenced only
+  # from the C/C++ static library get dropped at link time (undefined _F_IO_print etc.)
+  string(REPLACE " -flto" "" _OPTIMIZATION_AGGRESSIVE "${_OPTIMIZATION_AGGRESSIVE}")
+endif()
 
 if(DEFINED _OPTIMIZATION_${OPTIMIZATION})
   set(OPTIMIZATION_FLAGS "${_OPTIMIZATION_${OPTIMIZATION}}")
