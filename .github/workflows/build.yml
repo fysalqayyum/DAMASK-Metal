@@ -1,0 +1,82 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Build DAMASK-Metal on Apple silicon and run the host (CPU) Metal tests. The GPU tests need a Metal
+# device; hosted runners are virtual machines whose GPU support varies, so they run but do not fail
+# the build (run them locally: ctest --test-dir build -L gpu).
+name: build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos:
+    runs-on: macos-latest                                                                          # arm64
+    timeout-minutes: 150
+    env:
+      PETSC_VERSION: 3.25.6
+      PETSC_SHA256: 00ac91c7ae96eae6a39d7380c7e869c1c7ddbc0c64a23a0b5fd3442227c7cdb9
+      PETSC_ARCH: arch-damask-opt
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1                            # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Homebrew dependencies
+        run: brew install gcc open-mpi cmake pkgconf libfyaml boost
+
+      - name: PETSc cache
+        id: petsc-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9                               # v6.1.0
+        with:
+          path: ${{ runner.temp }}/petsc-${{ env.PETSC_VERSION }}
+          key: petsc-${{ env.PETSC_VERSION }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/workflows/build.yml') }}
+
+      - name: PETSc (as in docs/install-macos.md)
+        if: steps.petsc-cache.outputs.cache-hit != 'true'
+        working-directory: ${{ runner.temp }}
+        run: |
+          curl -sSLO https://web.cels.anl.gov/projects/petsc/download/release-snapshots/petsc-${PETSC_VERSION}.tar.gz
+          echo "${PETSC_SHA256}  petsc-${PETSC_VERSION}.tar.gz" | shasum -a 256 -c -
+          tar xzf petsc-${PETSC_VERSION}.tar.gz
+          cd petsc-${PETSC_VERSION}
+          ./configure --with-cc=mpicc --with-cxx=mpicxx --with-fc=mpif90 \
+                      --with-debugging=0 --with-blaslapack-lib="-framework Accelerate" \
+                      --download-fftw --download-hdf5 --with-hdf5-fortran-bindings=1 --download-zlib \
+                      --with-ssl=0 --with-x=0
+          make PETSC_DIR=$PWD PETSC_ARCH=$PETSC_ARCH all
+
+      - name: Build DAMASK-Metal
+        run: |
+          export PETSC_DIR=${{ runner.temp }}/petsc-${PETSC_VERSION}
+          source env/DAMASK-Metal.sh
+          cmake -S . -B build -DGRID=ON -DMESH=OFF -DCMAKE_BUILD_TYPE=RELEASE -DCMAKE_INSTALL_PREFIX=$PWD/build/install
+          cmake --build build --parallel --target install
+          cmake --build build --parallel --target metal-tests
+
+      - name: Host tests (no GPU needed)
+        run: ctest --test-dir build -L cpu --output-on-failure
+
+      - name: GPU tests (informational on hosted runners)
+        continue-on-error: true
+        run: ctest --test-dir build -L gpu --output-on-failure
+
+      - name: Smoke run of DAMASK_grid (2 increments, GPU if available)
+        run: |
+          export PETSC_DIR=${{ runner.temp }}/petsc-${PETSC_VERSION}
+          source env/DAMASK-Metal.sh
+          mkdir -p $RUNNER_TEMP/smoke && cd $RUNNER_TEMP/smoke
+          cp $GITHUB_WORKSPACE/examples/grid/20grains16x16x16.vti $GITHUB_WORKSPACE/examples/grid/material.yaml .
+          printf '%s\n' 'solver:' '  mechanical: spectral_basic' 'loadstep:' '  - boundary_conditions:' \
+            '      mechanical:' '        dot_F: [[1.0e-3, 0, 0], [0, x, 0], [0, 0, x]]' \
+            '        P: [[x, x, x], [x, 0, x], [x, x, 0]]' '    discretization: {t: 1, N: 2}' > load.yaml
+          set -o pipefail
+          $GITHUB_WORKSPACE/build/install/bin/DAMASK_grid -g 20grains16x16x16.vti -l load.yaml -m material.yaml | tee run.log
+          grep -E 'Metal GPU|on GPU|on CPU|not available' run.log || true
