@@ -88,11 +88,12 @@ struct Context {
   std::map<std::string, id<MTLLibrary>> cp_libs;
   std::vector<CPPhase>        cp_phases;
   CPBuffers                   cp_buf[2];
-  size_t                      cp_buf_bytes = 0;
+  size_t                      cp_buf_in = 0, cp_buf_out = 0;                                       // capacity of cp_buf: df64 components per point
   dispatch_queue_t            cp_queue = nullptr;                                                   // asynchronous constitutive jobs (serial: one at a time)
   dispatch_group_t            cp_group = nullptr;
-  std::map<int, int>          cp_job_rc;                                                            // return code of the last asynchronous job per phase
-  std::map<int, double>       cp_job_time;                                                          // its wall time [s] (submission to completion)
+  std::vector<int>            cp_job_rc;                                                            // return code of the last asynchronous job per phase
+  std::vector<double>         cp_job_time;                                                          // its wall time [s] (submission to completion)
+                                                                                                    // (sized when phases are added: no reallocation while jobs run)
   size_t                      cp_chunk = 16384;                                                     // points per command buffer (bounds GPU submission time)
   NSUInteger                  cp_tg = 32;                                                           // threads per threadgroup (pipeline hint)
 };
@@ -127,7 +128,7 @@ template<class M> struct cp_has_switch<M, std::void_t<decltype(M::switch_entry)>
 //> kinematics (FP64, exact up to rounding): invFp_new = invFp0 (I - dt Lp), Fe = F invFp_new,
 //> P = Fe S invFp_new^T; physics (FP32, loose tolerances): stress residual, flow rule, dot-state update
 //> (100x DAMASK's state tolerance); delta state recomputed in FP64 from the returned S and X.
-//> Guards against silent corruption of GPU results (observed: whole SIMD groups, see memory notes).
+//> Guards against silent corruption of GPU results (observed for whole SIMD groups; docs/design.md).
 template<class M>
 bool cp_verify(const typename M::param& prm, const cp_numerics& num, double dt,
                const df64* in, const df64* out, size_t m, size_t j) {
@@ -334,6 +335,14 @@ void cp_set_numerics(CPPhase& ph, const double* C66, const double* numerics) {
   ph.num.mixed       = cp_precision();                                                             // 0 df64, 1 mixed, 2 fast
 }
 
+//> add a phase; returns its handle
+int cp_register_phase(Context* ctx, const CPPhase& ph) {
+  ctx->cp_phases.push_back(ph);
+  ctx->cp_job_rc.resize(ctx->cp_phases.size(), 1);
+  ctx->cp_job_time.resize(ctx->cp_phases.size(), 0.0);
+  return int(ctx->cp_phases.size()) - 1;
+}
+
 //> pipelines of one policy type (e.g. cp_model_pheno<12>): own library compiled with CP_MODEL_TYPE, cached;
 //> the threadgroup size is bounded at pipeline creation (more registers per thread, fewer spills)
 bool cp_pipelines(Context* ctx, const std::string& key, CPPhase& ph) {
@@ -497,15 +506,15 @@ int cp_run(Context* ctx, const CPPhase& ph, int n, double dt,
            int* status, int* iterations) {
   typedef cp_layout<M> L;
   const size_t chunk = ctx->cp_chunk;
-  const size_t bytes = chunk*(L::n_in + L::n_out)*sizeof(df64) + chunk*(2*sizeof(int) + 81*sizeof(float));
-  if (ctx->cp_buf_bytes < bytes) {
+  if (ctx->cp_buf_in < size_t(L::n_in) || ctx->cp_buf_out < size_t(L::n_out)) {
+    ctx->cp_buf_in  = std::max(ctx->cp_buf_in,  size_t(L::n_in));
+    ctx->cp_buf_out = std::max(ctx->cp_buf_out, size_t(L::n_out));
     for (int b = 0; b < 2; ++b) {
-      ctx->cp_buf[b].in   = [ctx->device newBufferWithLength:chunk*L::n_in*sizeof(df64)  options:MTLResourceStorageModeShared];
-      ctx->cp_buf[b].out  = [ctx->device newBufferWithLength:chunk*L::n_out*sizeof(df64) options:MTLResourceStorageModeShared];
+      ctx->cp_buf[b].in   = [ctx->device newBufferWithLength:chunk*ctx->cp_buf_in*sizeof(df64)  options:MTLResourceStorageModeShared];
+      ctx->cp_buf[b].out  = [ctx->device newBufferWithLength:chunk*ctx->cp_buf_out*sizeof(df64) options:MTLResourceStorageModeShared];
       ctx->cp_buf[b].stat = [ctx->device newBufferWithLength:chunk*2*sizeof(int)         options:MTLResourceStorageModeShared];
       ctx->cp_buf[b].dPdF = [ctx->device newBufferWithLength:chunk*81*sizeof(float)      options:MTLResourceStorageModeShared];
     }
-    ctx->cp_buf_bytes = bytes;
   }
 
   const size_t n_chunks = (size_t(n) + chunk - 1) / chunk;
@@ -526,8 +535,12 @@ int cp_run(Context* ctx, const CPPhase& ph, int n, double dt,
     t_host += seconds(a, Clock::now());
     return true;
   };
+  auto fail = [&]() -> int {                                                                        // drain: the next call reuses cp_buf
+    for (auto& cb : cbs) if (cb) [cb waitUntilCompleted];
+    return 1;
+  };
   for (size_t k = 0; k < n_chunks; ++k) {
-    if (k >= 2 && !finish(k-2)) return 1;
+    if (k >= 2 && !finish(k-2)) return fail();
     auto a = Clock::now();
     size_t off = k*chunk, m = std::min(chunk, size_t(n) - off);
     const CPBuffers& buf = ctx->cp_buf[k%2];
@@ -556,7 +569,7 @@ int cp_run(Context* ctx, const CPPhase& ph, int n, double dt,
     [cbs[k] commit];
   }
   for (size_t k = n_chunks >= 2 ? n_chunks-2 : 0; k < n_chunks; ++k)
-    if (!finish(k)) return 1;
+    if (!finish(k)) return fail();
   ctx->t_host = t_host;
   ctx->t_gpu  = seconds(t0, Clock::now()) - t_host;
   if (getenv("DAMASK_METAL_VERBOSE")) {
@@ -835,8 +848,7 @@ int C_Metal_cp_add_phase_model(void* p, int model, int N_sl, const double* C66,
     if (getenv("DAMASK_METAL_VERBOSE"))
       std::fprintf(stderr, "DAMASK_Metal: phase model %s, %d slip systems (kernel %d), threadgroup %lu\n", policy, N_sl, Np,
                    (unsigned long)ph.integrate.maxTotalThreadsPerThreadgroup);
-    ctx->cp_phases.push_back(ph);
-    return int(ctx->cp_phases.size()) - 1;
+    return cp_register_phase(ctx, ph);
   }
 }
 
@@ -872,8 +884,7 @@ int C_Metal_cp_add_phase_tdt(void* p, const int* dims, const double* C66, const 
     cp_set_numerics(ph, C66, numerics);
     if (getenv("DAMASK_METAL_VERBOSE"))
       std::fprintf(stderr, "DAMASK_Metal: phase model %s (%d slip, %d twin systems, %d slip families)\n", type.c_str(), ns, nt, nf);
-    ctx->cp_phases.push_back(ph);
-    return int(ctx->cp_phases.size()) - 1;
+    return cp_register_phase(ctx, ph);
   }
 }
 
@@ -910,8 +921,7 @@ int C_Metal_cp_add_phase_twintrip(void* p, const int* dims, int n_blob, const do
     cp_set_numerics(ph, C66, numerics);
     if (getenv("DAMASK_METAL_VERBOSE"))
       std::fprintf(stderr, "DAMASK_Metal: phase model %s (state %d)\n", type.c_str(), dims[10]);
-    ctx->cp_phases.push_back(ph);
-    return int(ctx->cp_phases.size()) - 1;
+    return cp_register_phase(ctx, ph);
   }
 }
 
@@ -1001,10 +1011,9 @@ int C_Metal_cp_submit(void* p, int phase, int n, double dt,
 int C_Metal_cp_wait(void* p, int phase, double* t_wall) {
   Context* ctx = static_cast<Context*>(p);
   if (ctx->cp_group) dispatch_group_wait(ctx->cp_group, DISPATCH_TIME_FOREVER);
-  auto it = ctx->cp_job_rc.find(phase);
-  if (it == ctx->cp_job_rc.end()) return 1;
+  if (phase < 0 || phase >= int(ctx->cp_job_rc.size())) return 1;
   if (t_wall) *t_wall = ctx->cp_job_time[phase];
-  return it->second;
+  return ctx->cp_job_rc[phase];
 }
 
 void C_Metal_cp_set_precision(int mode) { g_cp_prec = mode; }

@@ -714,30 +714,20 @@ function twintrip_C66(C,wT,wE,wA,ph) result(Cbar)
       c_hP = [C11 - C14**2/C44, C12 + C14**2/C44, C44 - C14**2/(0.5_pREAL*(C11 - C12)), C13, C33]
     end if
 
-    if (prm%Reuss) then                                                                             ! (merge would evaluate inv66 also for Voigt)
-      Cbar = w_g*inv66(C)
-    else
-      Cbar = w_g*C
-    end if
+    Cbar = w_g*inv66_if(C,prm%Reuss)
     do p = 1, 4
       if (wT(p) > 0.0_pREAL) then
         C_r = C(1,1)*prm%C_T(:,:,1,p) + C(1,2)*prm%C_T(:,:,2,p) + C(4,4)*prm%C_T(:,:,3,p)
-        if (prm%Reuss) C_r = inv66(C_r)
-        Cbar = Cbar + wT(p)*C_r
+        Cbar = Cbar + wT(p)*inv66_if(C_r,prm%Reuss)
       end if
       if (wE(p) > 0.0_pREAL) then
         C_r = 0.0_pREAL
         do i = 1, 5
           C_r = C_r + c_hP(i)*prm%C_E(:,:,i,p)
         end do
-        if (prm%Reuss) C_r = inv66(C_r)
-        Cbar = Cbar + wE(p)*C_r
+        Cbar = Cbar + wE(p)*inv66_if(C_r,prm%Reuss)
       end if
-      if (wA(p) > 0.0_pREAL) then
-        C_r = prm%C_A(:,:,p)
-        if (prm%Reuss) C_r = inv66(C_r)
-        Cbar = Cbar + wA(p)*C_r
-      end if
+      if (wA(p) > 0.0_pREAL) Cbar = Cbar + wA(p)*inv66_if(prm%C_A(:,:,p),prm%Reuss)
     end do
     if (prm%Reuss) Cbar = inv66(Cbar)
 
@@ -1109,16 +1099,16 @@ module function plastic_twintrip_GPUadd(ph,C66,numerics,ndep) result(handle)
       c_hP = [C11 - C14**2/C44, C12 + C14**2/C44, C44 - C14**2/(0.5_pREAL*(C11 - C12)), C13, C33]
     end if
     M = 0.0_pREAL
-    M(1,:,:) = merge(inv66(C66),C66,prm%Reuss)
+    M(1,:,:) = inv66_if(C66,prm%Reuss)
     do p = 1, 4
       C_r = C66(1,1)*prm%C_T(:,:,1,p) + C66(1,2)*prm%C_T(:,:,2,p) + C66(4,4)*prm%C_T(:,:,3,p)
-      M(1+p,:,:) = merge(inv66(C_r),C_r,prm%Reuss)
+      M(1+p,:,:) = inv66_if(C_r,prm%Reuss)
       C_r = 0.0_pREAL
       do i = 1, 5
         C_r = C_r + c_hP(i)*prm%C_E(:,:,i,p)
       end do
-      if (prm%sum_N_tr > 0) M(5+p,:,:) = merge(inv66(C_r),C_r,prm%Reuss)
-      if (prm%alpha)        M(9+p,:,:) = merge(inv66(prm%C_A(:,:,p)),prm%C_A(:,:,p),prm%Reuss)
+      if (prm%sum_N_tr > 0) M(5+p,:,:) = inv66_if(C_r,prm%Reuss)
+      if (prm%alpha)        M(9+p,:,:) = inv66_if(prm%C_A(:,:,p),prm%Reuss)
     end do
 
     blob = [(reshape(M(i,:,:),[36]),i=1,13), &

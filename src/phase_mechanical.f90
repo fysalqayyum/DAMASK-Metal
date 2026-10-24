@@ -1322,7 +1322,7 @@ module function phase_mechanical_dPdF(Delta_t,co,ce) result(dPdF)
   call phase_LiAndItsTangents(devNull,dLidS,dLidFi, &
                               phase_mechanical_S(ph)%data(1:3,1:3,en), &
                               phase_mechanical_Fi(ph)%data(1:3,1:3,en), &
-                              ph,en)
+                              ph,en, Delta_t,math_inv33(phase_mechanical_Fi0(ph)%data(1:3,1:3,en)))  ! as in integrateStress (state-defined eigenstrains)
 
   invFp = math_inv33(phase_mechanical_Fp(ph)%data(1:3,1:3,en))
   invFi = math_inv33(phase_mechanical_Fi(ph)%data(1:3,1:3,en))
@@ -1554,6 +1554,22 @@ end subroutine phase_set_F
 
 
 #if defined(METAL) && defined(GRID)
+!--------------------------------------------------------------------------------------------------
+!> @brief Whether the constitutive update of a phase may run on the GPU (before the GPU is set up at
+!> the first call of phase_mechanical_constitutive_GPU: whenever the GPU is used at all).
+!--------------------------------------------------------------------------------------------------
+module function phase_mechanical_GPUcapable(ph) result(capable)
+
+  integer, intent(in) :: ph
+  logical :: capable
+
+
+  capable = Metal_constitutive .and. c_associated(Metal_ctx)
+  if (capable .and. allocated(GPU_handle)) capable = GPU_handle(ph) >= 0                           ! not yet set up (first call): maybe
+
+end function phase_mechanical_GPUcapable
+
+
 !--------------------------------------------------------------------------------------------------
 !> @brief Constitutive update of a batch of cells on the GPU (queued; see
 !> phase_mechanical_constitutive_GPU_finish).

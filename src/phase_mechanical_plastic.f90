@@ -440,11 +440,7 @@ module function plastic_statePreconditioner(subdt,ph,en) result(pc)
     Mp = matmul(matmul(transpose(phase_mechanical_Fi(ph)%data(1:3,1:3,en)),&
                        phase_mechanical_Fi(ph)%data(1:3,1:3,en)),phase_mechanical_S(ph)%data(1:3,1:3,en))
     pc = 1.0_pREAL/(1.0_pREAL - subdt*tdt_dotStateDiag(Mp,subdt,ph,en))
-  elseif (mechanical_plasticity_type(ph) == MECHANICAL_PLASTICITY_TWINTRIP) then
-    Mp = matmul(matmul(transpose(phase_mechanical_Fi(ph)%data(1:3,1:3,en)),&
-                       phase_mechanical_Fi(ph)%data(1:3,1:3,en)),phase_mechanical_S(ph)%data(1:3,1:3,en))
-    pc = 1.0_pREAL/(1.0_pREAL - subdt*twintrip_dotStateDiag(Mp,ph,en))
-  else
+  else                                                                                              ! twintrip: plain FPI on the CPU (the GPU preconditions)
     pc = 1.0_pREAL
   end if
 
@@ -593,5 +589,25 @@ pure function inv66(A) result(B)
   B = W(1:6,7:12)
 
 end function inv66
+
+
+!--------------------------------------------------------------------------------------------------
+!> @brief Compliance (Reuss average: invert) or stiffness (Voigt average) of a 6x6 stiffness.
+!> @details Unlike merge(inv66(A),A,invert), inverts only when needed.
+!--------------------------------------------------------------------------------------------------
+pure function inv66_if(A,invert) result(B)
+
+  real(pREAL), dimension(6,6), intent(in) :: A
+  logical, intent(in) :: invert
+  real(pREAL), dimension(6,6) :: B
+
+
+  if (invert) then
+    B = inv66(A)
+  else
+    B = A
+  end if
+
+end function inv66_if
 
 end submodule plastic

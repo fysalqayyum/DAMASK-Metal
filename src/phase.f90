@@ -328,6 +328,11 @@ module phase
     end function phase_mechanical_constitutive
 
 #if defined(METAL) && defined(GRID)
+    module function phase_mechanical_GPUcapable(ph) result(capable)
+      integer, intent(in) :: ph
+      logical :: capable
+    end function phase_mechanical_GPUcapable
+
     module subroutine phase_mechanical_constitutive_GPU(Delta_t,ce_start,ce_end,eligible,pending)
       real(pREAL), intent(in) :: Delta_t
       integer, intent(in) :: ce_start, ce_end
@@ -424,6 +429,7 @@ module phase
     converged, &
     phase_mechanical_constitutive, &
 #if defined(METAL) && defined(GRID)
+    phase_mechanical_GPUcapable, &
     phase_mechanical_constitutive_GPU, &
     phase_mechanical_constitutive_GPU_finish, &
 #endif

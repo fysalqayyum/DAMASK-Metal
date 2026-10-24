@@ -279,17 +279,22 @@ subroutine homogenization_mechanical_response(status,Delta_t,cell_start,cell_end
     GPU_eligible, &                                                                                 !< single constituent, pass homogenization
     GPU_pending, &                                                                                  !< being integrated on the GPU (concurrently with the CPU loop)
     GPU_done                                                                                        !< mechanical response computed on GPU
+  logical, dimension(size(material_name_phase)) :: &
+    GPU_phase                                                                                       !< constitutive update of the phase on the GPU
   integer(pI64) :: t0, t1, rate
+  integer :: ph
 #endif
 
 
   status = STATUS_OK
 
 #if defined(METAL) && defined(GRID)
+  GPU_phase = [(phase_mechanical_GPUcapable(ph), ph = 1, size(GPU_phase))]
   !$OMP PARALLEL DO PRIVATE(en,ho)
   do ce = cell_start, cell_end
     ho = material_ID_homogenization(ce)
     GPU_eligible(ce) = mechanical_GPUeligible(ce)
+    if (GPU_eligible(ce)) GPU_eligible(ce) = GPU_phase(material_ID_phase(1,ce))
     if (GPU_eligible(ce)) then                                                                      ! same preparation as in the loop below
       en = material_entry_homogenization(ce)
       call phase_restore(ce)

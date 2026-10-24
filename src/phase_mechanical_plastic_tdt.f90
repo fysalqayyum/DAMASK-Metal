@@ -654,9 +654,9 @@ module function plastic_tdt_GPUadd(ph,C66,numerics) result(handle)
       C_tw = crystal_C66_twin(prm%N_tw_fam,C66,phase_lattice(ph),phase_cOverA(ph))
       blob = [reshape(prm%P_sl,[9*prm%sum_N_sl]), reshape(prm%P_sl_tw,[9*prm%sum_N_sl*prm%sum_N_tw]), &
               reshape(prm%P_tw,[9*prm%sum_N_tw]), &
-              reshape(merge(inv66(C66),C66,prm%Reuss),[36])]
+              reshape(inv66_if(C66,prm%Reuss),[36])]
       do k = 1, prm%sum_N_tw
-        blob = [blob, reshape(merge(inv66(C_tw(:,:,k)),C_tw(:,:,k),prm%Reuss),[36])]
+        blob = [blob, reshape(inv66_if(C_tw(:,:,k),prm%Reuss),[36])]
       end do
       blob = [blob, prm%dot_gamma_0_sl, prm%n_sl, prm%a_sl, prm%h_0_sl_sl, prm%xi_inf_sl, real(prm%fam,pREAL), &
               prm%xi_inf_sl_tw, prm%h_0_sl_tw_f, prm%a_sl_tw, &
