@@ -104,7 +104,7 @@ int main(int argc, char** argv) {
     std::vector<double> P(9*n), S(9*n), Fp(9*n), Fe(9*n), Lpo(9*n), st(2*N*n); std::vector<float> T(81*size_t(n));
     status.assign(n, -1); its.assign(n, 0);
     auto t0 = std::chrono::steady_clock::now();
-    int rc = C_Metal_cp_integrate(ctx, ph, n, dt, F.data(), Fp0.data(), S0.data(), Lp.data(), st0.data(), nullptr,
+    int rc = C_Metal_cp_integrate(ctx, ph, n, 2*N, dt, F.data(), Fp0.data(), S0.data(), Lp.data(), st0.data(), nullptr,
                                   P.data(), S.data(), Fp.data(), Fe.data(), Lpo.data(), st.data(), T.data(), status.data(), its.data());
     double t = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     out.resize(n);

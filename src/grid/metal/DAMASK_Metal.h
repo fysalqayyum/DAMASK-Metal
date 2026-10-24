@@ -74,15 +74,16 @@ int C_Metal_cp_add_phase_model(void* ctx, int model, int N_sl, const double* C66
 //> composite twinning model tdt (phase_mechanical_plastic_tdt.f90, cp_model_tdt in cp_models_composite.h):
 //> dims = [N_slip, N_twin, N_slip_families, Reuss(1)/Voigt(0)], C66 = parent stiffness, blob as assembled
 //> by plastic_tdt_GPUadd (Schmid tensors of parent and twins, compliances/stiffnesses, per-system and
-//> per-family parameters, scaled interaction matrices, f_n, f_sat, f_min), atols = [xi, gamma, f].
+//> per-family parameters, scaled interaction matrices, f_n, f_sat, f_min; n_blob values, which must be
+//> exactly what dims imply, else < 0), atols = [xi, gamma, f].
 //> Up to 36 slip systems, 12 twin systems, 6 slip families. state0/state hold DAMASK's state followed by
 //> the homogenized C66 (36).
-int C_Metal_cp_add_phase_tdt(void* ctx, const int* dims, const double* C66, const double* blob,
+int C_Metal_cp_add_phase_tdt(void* ctx, const int* dims, int n_blob, const double* C66, const double* blob,
                              const double* atols, const double* numerics);
 
 //> add a twintrip phase (phase_mechanical_plastic_twintrip.f90): dims = [N_tw, N_tr, alpha', slip systems
-//> and families per plane of the twin, epsilon and alpha' regions, Reuss, sizeState], blob (n_blob values)
-//> as packed by plastic_twintrip_GPUadd, atol (sizeState). Fi = (1 + Delta_V sum(f_a))^(1/3) I of the
+//> and families per plane of the twin, epsilon and alpha' regions, Reuss, sizeState], blob (n_blob values,
+//> exactly what dims imply, else < 0) as packed by plastic_twintrip_GPUadd, atol (sizeState). Fi = (1 + Delta_V sum(f_a))^(1/3) I of the
 //> returned state (Fe is returned as F invFp invFi). state0/state hold DAMASK's state followed by
 //> [C66, Lambda_sl, Lambda_tw, Lambda_tr, tau_pass, (j^2)].
 int C_Metal_cp_add_phase_twintrip(void* ctx, const int* dims, int n_blob, const double* C66, const double* blob,
@@ -92,8 +93,10 @@ int C_Metal_cp_add_phase_twintrip(void* ctx, const int* dims, int n_blob, const 
 //> as DAMASK's plasticState%state0, T (n) temperature or NULL. Outputs (written only where status == 0):
 //> P, S, Fp, Fe, Lp (3,3,n), state (n_state,n), dPdF (3,3,3,3,n) in float (DAMASK's analytic tangent;
 //> skipped if NULL). status(n): 0 = converged and certified, otherwise the point needs the CPU path.
+//> n_state must equal the state stride of the phase (DAMASK state + dependent state), else nonzero is
+//> returned and nothing is read or written.
 //> iterations(n) may be NULL.
-int C_Metal_cp_integrate(void* ctx, int phase, int n, double dt,
+int C_Metal_cp_integrate(void* ctx, int phase, int n, int n_state, double dt,
                          const double* F, const double* Fp0, const double* S0, const double* Lp_guess,
                          const double* state0, const double* T,
                          double* P, double* S, double* Fp, double* Fe, double* Lp, double* state, float* dPdF,
@@ -103,7 +106,7 @@ int C_Metal_cp_integrate(void* ctx, int phase, int n, double dt,
 //> returns at once; all arrays must stay valid until C_Metal_cp_wait. C_Metal_cp_wait waits for all
 //> queued jobs and returns the result of the job of the given phase, t_wall (may be NULL): its time
 //> from submission to completion [s].
-int C_Metal_cp_submit(void* ctx, int phase, int n, double dt,
+int C_Metal_cp_submit(void* ctx, int phase, int n, int n_state, double dt,
                       const double* F, const double* Fp0, const double* S0, const double* Lp_guess,
                       const double* state0, const double* T,
                       double* P, double* S, double* Fp, double* Fe, double* Lp, double* state, float* dPdF,

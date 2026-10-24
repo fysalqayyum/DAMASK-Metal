@@ -102,7 +102,7 @@ static int run(void* ctx, const char* name, int model, int N, const std::vector<
   std::vector<double> gP(9*n), gS(9*n), gFp(9*n), gFe(9*n), gLp(9*n), gst(NS*size_t(n)); std::vector<float> T(81*size_t(n));
   std::vector<int> status(n), its(n);
   std::vector<double> Tv(n, Temp);
-  if (C_Metal_cp_integrate(ctx, ph, n, dt, iF.data(), iFp0.data(), iS0.data(), iLp.data(), ist.data(), Tv.data(),
+  if (C_Metal_cp_integrate(ctx, ph, n, NS, dt, iF.data(), iFp0.data(), iS0.data(), iLp.data(), ist.data(), Tv.data(),
                            gP.data(), gS.data(), gFp.data(), gFe.data(), gLp.data(), gst.data(), T.data(), status.data(), its.data())) {
     std::printf("%s: GPU call failed\n", name); return 1;
   }

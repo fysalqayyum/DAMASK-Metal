@@ -25,10 +25,15 @@ template<class M>
 static int run(Reader& r, const int* dims, const std::vector<double>& C66, const std::vector<double>& blob,
                const std::vector<double>& atol) {
   static cp_twintrip_param p;
-  cp_twintrip_pack(dims, C66.data(), blob.data(), atol.data(), p);
   const int ND = M::ND, nt = dims[0], nr = dims[1];
   if (ND != dims[10]) { std::printf("state size: policy %d, DAMASK %d\n", ND, dims[10]); return 1; }
+  std::vector<double> pb(CP_BLOB_MAX, 0.0);                                                         // padded as in the bridge
+  std::copy(blob.begin(), blob.end(), pb.begin());
+  const int used = cp_twintrip_pack(dims, C66.data(), pb.data(), atol.data(), p);
+  if (used < 0) { std::printf("blob: index out of range\n"); return 1; }
+  if (used != int(blob.size())) { std::printf("blob: %zu values, dims need %d\n", blob.size(), used); return 1; }
   int ns_ = 0; r.get(&ns_, 1);
+  if (ns_ < 0 || ns_ > 100000) { std::printf("invalid sample count %d\n", ns_); return 1; }
   double eD = 0, eC = 0, eJ = 0, eL = 0, eK = 0, eX = 0, eJd = 0, eFD = 0;
   int worst_X = -1, worst_s = -1;
   for (int s = 0; s < ns_; ++s) {
@@ -92,6 +97,7 @@ int main(int argc, char** argv) {
   if (!r.f) { std::printf("cannot open %s\n", argv[1]); return 2; }
   int dims[11], nb;
   r.get(dims, 11); r.get(&nb, 1);
+  if (nb < 0 || nb > CP_BLOB_MAX || dims[10] < 0 || dims[10] > CP_TT_NDMAX) { std::printf("invalid golden file header\n"); return 2; }
   std::vector<double> C66(36), blob(nb), atol(dims[10]);
   r.get(C66.data(), 36); r.get(blob.data(), nb); r.get(atol.data(), dims[10]);
   std::printf("twintrip <%d,%d,%d,%d,%d,%d,%d,%d,%d> Reuss %d, state %d, blob %d\n",

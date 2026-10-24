@@ -27,26 +27,31 @@ int main(int argc, char** argv) {
   const bool tt = !fp && (fp = std::fopen((base + ".ttphase").c_str(), "rb"));                    // twintrip
   FILE* fb = std::fopen((base + ".batch").c_str(), "rb");
   if (!fp || !fb) { std::fprintf(stderr, "missing %s.phase/.ttphase/.batch\n", base.c_str()); return 1; }
-  int dims[11], nb, model = CP_MODEL_TDT;
+  const int kMaxBlob = 65536, kMaxState = 1024, kMaxPoints = 1 << 24;                              // sanity limits for file-supplied sizes
+  int dims[11], nb = -1, model = CP_MODEL_TDT;
   double C66[36], atols[3], numerics[7];
   std::vector<double> atolv;
   bool okr = (!tt || std::fread(&model, sizeof(int), 1, fp) == 1)
           && std::fread(dims, sizeof(int), tt ? 11 : 4, fp) == size_t(tt ? 11 : 4) && std::fread(&nb, sizeof(int), 1, fp) == 1;
+  if (!okr || nb < 0 || nb > kMaxBlob || (tt && (dims[10] < 0 || dims[10] > kMaxState))) {
+    std::fprintf(stderr, "invalid phase file\n"); return 1;
+  }
   std::vector<double> blob(nb);
   okr = okr && std::fread(C66, 8, 36, fp) == 36 && std::fread(blob.data(), 8, nb, fp) == size_t(nb);
   if (tt) { atolv.resize(dims[10]); okr = okr && std::fread(atolv.data(), 8, dims[10], fp) == size_t(dims[10]); }
   else okr = okr && std::fread(atols, 8, 3, fp) == 3;
   okr = okr && std::fread(numerics, 8, 7, fp) == 7;
-  int n, NS; double dt;
+  int n = 0, NS = 0; double dt;
   okr = okr && std::fread(&n, 4, 1, fb) == 1 && std::fread(&NS, 4, 1, fb) == 1 && std::fread(&dt, 8, 1, fb) == 1;
-  std::vector<double> F(9*n), Fp0(9*n), S0(9*n), Lpg(9*n), st0(size_t(NS)*n), T(n);
+  if (!okr || n < 1 || n > kMaxPoints || NS < 1 || NS > kMaxState) { std::fprintf(stderr, "invalid batch file\n"); return 1; }
+  std::vector<double> F(9*size_t(n)), Fp0(9*size_t(n)), S0(9*size_t(n)), Lpg(9*size_t(n)), st0(size_t(NS)*n), T(n);
   for (auto* a : {&F, &Fp0, &S0, &Lpg}) okr = okr && std::fread(a->data(), 8, 9*size_t(n), fb) == 9*size_t(n);
   okr = okr && std::fread(st0.data(), 8, st0.size(), fb) == st0.size() && std::fread(T.data(), 8, n, fb) == size_t(n);
   if (!okr) { std::fprintf(stderr, "read error\n"); return 1; }
   std::fclose(fp); std::fclose(fb);
   if (const char* sub = getenv("BENCH_N")) n = std::min(n, std::max(1, atoi(sub)));                 // first BENCH_N points only (arrays keep their stride)
   if (const char* rep = getenv("BENCH_REPLICATE")) {                                                // more points: copies of the batch
-    const int k = std::max(1, atoi(rep));
+    const int k = std::min(std::max(1, atoi(rep)), kMaxPoints/n);
     auto grow = [&](std::vector<double>& a) { size_t m = a.size(); a.resize(m*k); for (int c = 1; c < k; ++c) std::copy(a.begin(), a.begin()+m, a.begin()+c*m); };
     for (auto* a : {&F, &Fp0, &S0, &Lpg, &st0, &T}) grow(*a);
     n *= k;
@@ -58,16 +63,16 @@ int main(int argc, char** argv) {
   if (getenv("BENCH_NSTATE")) numerics[6] = atof(getenv("BENCH_NSTATE"));                          // state iteration cap
   if (getenv("BENCH_NSTRESS")) numerics[5] = atof(getenv("BENCH_NSTRESS"));
   int ph = tt ? C_Metal_cp_add_phase_twintrip(ctx, dims, nb, C66, blob.data(), atolv.data(), numerics)
-              : C_Metal_cp_add_phase_tdt(ctx, dims, C66, blob.data(), atols, numerics);
+              : C_Metal_cp_add_phase_tdt(ctx, dims, nb, C66, blob.data(), atols, numerics);
   if (ph < 0) { std::printf("add_phase failed (%d)\n", ph); return 1; }
 
-  std::vector<double> P(9*n), S(9*n), Fp(9*n), Fe(9*n), Lp(9*n), st(size_t(NS)*n);
+  std::vector<double> P(9*size_t(n)), S(9*size_t(n)), Fp(9*size_t(n)), Fe(9*size_t(n)), Lp(9*size_t(n)), st(size_t(NS)*n);
   std::vector<float> dPdF(81*size_t(n));
   std::vector<int> stat(n), it(n);
   double best = 1e30, sum = 0;
   for (int r = 0; r <= R; ++r) {                                                                    // r = 0: warm-up (shader compilation)
     auto t0 = std::chrono::steady_clock::now();
-    if (C_Metal_cp_integrate(ctx, ph, n, dt, F.data(), Fp0.data(), S0.data(), Lpg.data(), st0.data(), T.data(),
+    if (C_Metal_cp_integrate(ctx, ph, n, NS, dt, F.data(), Fp0.data(), S0.data(), Lpg.data(), st0.data(), T.data(),
                              P.data(), S.data(), Fp.data(), Fe.data(), Lp.data(), st.data(), getenv("BENCH_NO_TANGENT") ? nullptr : dPdF.data(), stat.data(), it.data())) {
       std::printf("integrate failed\n"); return 1;
     }

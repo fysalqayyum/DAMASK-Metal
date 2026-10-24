@@ -336,6 +336,23 @@ void cp_set_numerics(CPPhase& ph, const double* C66, const double* numerics) {
   ph.num.mixed       = cp_precision();                                                             // 0 df64, 1 mixed, 2 fast
 }
 
+//> parameter blob zero-padded to CP_BLOB_MAX: the dims-driven pack functions never read past it, and
+//> the number of values they read is checked against n_blob (cp_blob_mismatch)
+std::vector<double> cp_padded_blob(const double* blob, int n_blob) {
+  std::vector<double> b(CP_BLOB_MAX, 0.0);
+  if (blob && n_blob > 0) std::copy(blob, blob + std::min(n_blob, CP_BLOB_MAX), b.begin());
+  return b;
+}
+
+int cp_blob_mismatch(const char* model, int n_blob, int used) {
+  if (used < 0)
+    std::fprintf(stderr, "DAMASK_Metal: %s parameters contain an index out of range: phase stays on the CPU\n", model);
+  else
+    std::fprintf(stderr, "DAMASK_Metal: %s parameter blob has %d values, its dimensions need %d: phase stays on the CPU\n",
+                 model, n_blob, used);
+  return -2;
+}
+
 //> add a phase; returns its handle
 int cp_register_phase(Context* ctx, const CPPhase& ph) {
   ctx->cp_phases.push_back(ph);
@@ -509,11 +526,17 @@ void cp_unpack(const CPBuffers& buf, size_t m, size_t off, const CPPhase& ph, do
 //> chunked, double-buffered execution: pack chunk k+1 while the GPU integrates chunk k;
 //> per chunk one command buffer: integrate, then (optionally) tangent at the converged state
 template<class M>
-int cp_run(Context* ctx, const CPPhase& ph, int n, double dt,
+int cp_run(Context* ctx, const CPPhase& ph, int n, int n_state, double dt,
            const double* F, const double* Fp0, const double* S0, const double* Lp_guess, const double* state0, const double* T,
            double* P, double* S, double* Fp, double* Fe, double* Lp, double* state, float* dPdF,
            int* status, int* iterations) {
   typedef cp_layout<M> L;
+  const int NS = !ph.smap.empty() ? int(ph.smap.size()) : M::FLAT ? M::ND + M::NY + M::NDEP
+                                                          : (M::NBX + M::NBY + M::NBD) * ph.N;     // as cp_pack/cp_unpack
+  if (n_state != NS) {
+    std::fprintf(stderr, "DAMASK_Metal: state stride %d given, phase needs %d\n", n_state, NS);
+    return 1;
+  }
   const size_t chunk = ctx->cp_chunk;
   if (ctx->cp_buf_in < size_t(L::n_in) || ctx->cp_buf_out < size_t(L::n_out)) {
     ctx->cp_buf_in  = std::max(ctx->cp_buf_in,  size_t(L::n_in));
@@ -862,7 +885,7 @@ int C_Metal_cp_add_phase_model(void* p, int model, int N_sl, const double* C66,
 }
 
 //> tdt (see phase_mechanical_plastic_tdt.f90, plastic_tdt_GPUadd for the blob layout)
-int C_Metal_cp_add_phase_tdt(void* p, const int* dims, const double* C66, const double* blob,
+int C_Metal_cp_add_phase_tdt(void* p, const int* dims, int n_blob, const double* C66, const double* blob,
                              const double* atols, const double* numerics) {
   Context* ctx = static_cast<Context*>(p);
   @autoreleasepool {
@@ -878,13 +901,15 @@ int C_Metal_cp_add_phase_tdt(void* p, const int* dims, const double* C66, const 
 
     if (const char* cap = getenv("DAMASK_METAL_CAPTURE"))                                           // diagnostics: phase for replay (bench_cp_replay)
       if (FILE* fo = std::fopen((std::string(cap) + ".phase").c_str(), "wb")) {
-        const int nb = 9*ns + 9*ns*nt + 9*nt + 36*(1+nt) + 6*ns + 3*nf + 7*nt + ns*ns + 2*ns*nt + nt*nt + 3;
-        std::fwrite(dims, sizeof(int), 4, fo); std::fwrite(&nb, sizeof(int), 1, fo);
-        std::fwrite(C66, sizeof(double), 36, fo); std::fwrite(blob, sizeof(double), nb, fo);
+        std::fwrite(dims, sizeof(int), 4, fo); std::fwrite(&n_blob, sizeof(int), 1, fo);
+        std::fwrite(C66, sizeof(double), 36, fo); std::fwrite(blob, sizeof(double), n_blob, fo);
         std::fwrite(atols, sizeof(double), 3, fo); std::fwrite(numerics, sizeof(double), 7, fo); std::fclose(fo);
       }
     ph.param = [ctx->device newBufferWithLength:sizeof(cp_tdt_param) options:MTLResourceStorageModeShared];
-    cp_tdt_pack(dims, C66, blob, atols, NSL, NTW, NFAM, *static_cast<cp_tdt_param*>(ph.param.contents), ph.smap, ph.sinit);
+    const std::vector<double> pb = cp_padded_blob(blob, n_blob);
+    const int used = cp_tdt_pack(dims, C66, pb.data(), atols, NSL, NTW, NFAM, *static_cast<cp_tdt_param*>(ph.param.contents),
+                                 ph.smap, ph.sinit);
+    if (used != n_blob) return cp_blob_mismatch("tdt", n_blob, used);
     if (const char* dump = getenv("DAMASK_METAL_DUMP"))                                             // diagnostics: parameters for replay
       if (FILE* fo = std::fopen((std::string(dump) + ".param").c_str(), "wb")) {
         std::fwrite(ph.param.contents, sizeof(cp_tdt_param), 1, fo); std::fclose(fo);
@@ -925,7 +950,9 @@ int C_Metal_cp_add_phase_twintrip(void* p, const int* dims, int n_blob, const do
         std::fwrite(atol, sizeof(double), dims[10], fo); std::fwrite(numerics, sizeof(double), 7, fo); std::fclose(fo);
       }
     ph.param = [ctx->device newBufferWithLength:sizeof(cp_twintrip_param) options:MTLResourceStorageModeShared];
-    cp_twintrip_pack(dims, C66, blob, atol, *static_cast<cp_twintrip_param*>(ph.param.contents));
+    const std::vector<double> pb = cp_padded_blob(blob, n_blob);
+    const int used = cp_twintrip_pack(dims, C66, pb.data(), atol, *static_cast<cp_twintrip_param*>(ph.param.contents));
+    if (used != n_blob) return cp_blob_mismatch("twintrip", n_blob, used);
 
     cp_set_numerics(ph, C66, numerics);
     if (getenv("DAMASK_METAL_VERBOSE"))
@@ -947,7 +974,7 @@ int C_Metal_cp_add_phase(void* p, int N_sl, const double* C66,
   return C_Metal_cp_add_phase_model(p, 1, N_sl, C66, P_sl, P_nS_pos, P_nS_neg, h_sl_sl, v.data(), sc, numerics);
 }
 
-int C_Metal_cp_integrate(void* p, int phase, int n, double dt,
+int C_Metal_cp_integrate(void* p, int phase, int n, int n_state, double dt,
                          const double* F, const double* Fp0, const double* S0, const double* Lp_guess,
                          const double* state0, const double* T,
                          double* P, double* S, double* Fp, double* Fe, double* Lp, double* state, float* dPdF,
@@ -974,7 +1001,7 @@ int C_Metal_cp_integrate(void* p, int phase, int n, double dt,
   @autoreleasepool {
 #define CP_CASE(MODEL, POLICY, NP)                                                                  \
     if (ph.model == MODEL && ph.Np == NP)                                                           \
-      return cp_run<POLICY<NP>>(ctx, ph, n, dt, F, Fp0, S0, Lp_guess, state0, T, P, S, Fp, Fe, Lp, state, dPdF, status, iterations);
+      return cp_run<POLICY<NP>>(ctx, ph, n, n_state, dt, F, Fp0, S0, Lp_guess, state0, T, P, S, Fp, Fe, Lp, state, dPdF, status, iterations);
 #define CP_NP_CASES(MODEL, POLICY)                                                                  \
     CP_CASE(MODEL, POLICY, 12) CP_CASE(MODEL, POLICY, 24) CP_CASE(MODEL, POLICY, 30) CP_CASE(MODEL, POLICY, 48)
     CP_NP_CASES(CP_MODEL_PHENO, cp_model_pheno) CP_NP_CASES(CP_MODEL_KINEH, cp_model_kineh)
@@ -983,20 +1010,20 @@ int C_Metal_cp_integrate(void* p, int phase, int n, double dt,
 #undef CP_CASE
 #define CP_TDT_CASE(A, B, C)                                                                        \
     if (ph.model == CP_MODEL_TDT && ph.Np == A && ph.Np_tw == B && ph.Np_fam == C)                   \
-      return cp_run<cp_model_tdt<A,B,C>>(ctx, ph, n, dt, F, Fp0, S0, Lp_guess, state0, T, P, S, Fp, Fe, Lp, state, dPdF, status, iterations);
+      return cp_run<cp_model_tdt<A,B,C>>(ctx, ph, n, n_state, dt, F, Fp0, S0, Lp_guess, state0, T, P, S, Fp, Fe, Lp, state, dPdF, status, iterations);
     CP_TDT_CASES(CP_TDT_CASE)
 #undef CP_TDT_CASE
 #define CP_TT_CASE(q1,q2,q3,q4,q5,q6,q7,q8,q9)                                                               \
     if (ph.model == CP_MODEL_TWINTRIP && ph.tt[0]==q1 && ph.tt[1]==q2 && ph.tt[2]==q3 && ph.tt[3]==q4 && ph.tt[4]==q5     \
         && ph.tt[5]==q6 && ph.tt[6]==q7 && ph.tt[7]==q8 && ph.tt[8]==q9)                                 \
-      return cp_run<cp_model_twintrip<q1,q2,q3,q4,q5,q6,q7,q8,q9>>(ctx, ph, n, dt, F, Fp0, S0, Lp_guess, state0, T, P, S, Fp, Fe, Lp, state, dPdF, status, iterations);
+      return cp_run<cp_model_twintrip<q1,q2,q3,q4,q5,q6,q7,q8,q9>>(ctx, ph, n, n_state, dt, F, Fp0, S0, Lp_guess, state0, T, P, S, Fp, Fe, Lp, state, dPdF, status, iterations);
     CP_TT_CASES(CP_TT_CASE)
 #undef CP_TT_CASE
   }
   return 1;
 }
 
-int C_Metal_cp_submit(void* p, int phase, int n, double dt,
+int C_Metal_cp_submit(void* p, int phase, int n, int n_state, double dt,
                       const double* F, const double* Fp0, const double* S0, const double* Lp_guess,
                       const double* state0, const double* T,
                       double* P, double* S, double* Fp, double* Fe, double* Lp, double* state, float* dPdF,
@@ -1010,7 +1037,7 @@ int C_Metal_cp_submit(void* p, int phase, int n, double dt,
   ctx->cp_job_rc[phase] = -1;
   auto t0 = Clock::now();
   dispatch_group_async(ctx->cp_group, ctx->cp_queue, ^{
-    int rc = C_Metal_cp_integrate(p, phase, n, dt, F, Fp0, S0, Lp_guess, state0, T, P, S, Fp, Fe, Lp, state, dPdF,
+    int rc = C_Metal_cp_integrate(p, phase, n, n_state, dt, F, Fp0, S0, Lp_guess, state0, T, P, S, Fp, Fe, Lp, state, dPdF,
                                   status, iterations);
     ctx->cp_job_time[phase] = seconds(t0, Clock::now());
     ctx->cp_job_rc[phase] = rc;

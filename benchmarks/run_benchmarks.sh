@@ -17,13 +17,16 @@
 # Compare CPU and GPU results of a case with benchmarks/compare_runs.py (needs h5py).
 set -u
 root=${0:A:h:h}
-B=${DAMASK_GRID:-$root/build/install/bin/DAMASK_grid}
-OUT=${BENCH_OUT:-$PWD/bench-out}
+B=${${DAMASK_GRID:-$root/build/install/bin/DAMASK_grid}:A}
+OUT=${${BENCH_OUT:-$PWD/bench-out}:A}                                                             # absolute: the loop changes directory
 export OMP_NUM_THREADS=${OMP_NUM_THREADS:-$(sysctl -n hw.ncpu)}
 [[ -x $B ]] || { print -u2 "DAMASK_grid not found: $B (set DAMASK_GRID)"; exit 2; }
 g=${1:?usage: run_benchmarks.sh <16|32|64> [case ...]}; shift
 [[ $g == (16|32|64) ]] || { print -u2 "grid must be 16, 32 or 64"; exit 2; }
 if (( $# )); then cases=($@); else cases=(pheno phenotw dtung tdt twin trip); fi
+for c in $cases; do                                                                                 # before anything is deleted below
+  [[ $c == (pheno|phenotw|dtung|tdt|twin|trip) ]] || { print -u2 "unknown case $c"; exit 2; }
+done
 mkdir -p $OUT
 [[ -f $OUT/results.txt ]] || print "case grid variant wall_s increments newton_its gpu_points to_cpu_pct rejected max_rss_MB exit" > $OUT/results.txt
 
@@ -44,7 +47,7 @@ PY
 for c in $cases; do
   for v in cpu gpu; do
     d=$OUT/${c}_${g}_$v
-    rm -rf $d; mkdir -p $d; cd $d
+    rm -rf $d; mkdir -p $d; cd $d || exit 2
     cp $root/examples/grid/20grains${g}x${g}x${g}.vti geom.vti
     C=$root/benchmarks/cases/$c
     cut=3

@@ -1676,7 +1676,7 @@ module subroutine phase_mechanical_constitutive_GPU(Delta_t,ce_start,ce_end,elig
     !$OMP END PARALLEL DO
 
     w%dt = Delta_t
-    w%submitted = Metal_cpSubmit(Metal_ctx,int(GPU_handle(ph),C_INT),int(n,C_INT),Delta_t, &
+    w%submitted = Metal_cpSubmit(Metal_ctx,int(GPU_handle(ph),C_INT),int(n,C_INT),int(N_st,C_INT),Delta_t, &
                                  F,Fp0,S0,Lp_guess,state0,c_loc(Temp),P,S,Fp,Fe,Lp,state,dPdF_ptr,stat,iterations) == 0
     if (w%submitted) pending(ce_list) = .true.
 

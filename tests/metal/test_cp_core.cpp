@@ -834,9 +834,9 @@ int main() {
     const double atols[3] = {1.0, 1e-6, 1e-6};
     typedef cp_model_tdt<18,6,6> Mo; typedef cp_layout<Mo> L;
     static cp_tdt_param p; std::vector<int> smap; std::vector<double> sinit;
-    cp_tdt_pack(dims, C, blob.data(), atols, 18, 6, 6, p, smap, sinit);
+    const int used = cp_tdt_pack(dims, C, blob.data(), atols, 18, 6, 6, p, smap, sinit);
     const int NS = int(smap.size()) - 36;                                                           // DAMASK state incl. f0
-    bool ok = NS == 2*ns + (5+nf)*nt;
+    bool ok = NS == 2*ns + (5+nf)*nt && used == int(blob.size());
 
     // (a) derivatives at a state with twins present
     std::vector<double> X(sinit.begin(), sinit.begin()+Mo::ND+Mo::NY), Xd(NS, 0.0);

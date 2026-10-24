@@ -671,7 +671,7 @@ module function plastic_tdt_GPUadd(ph,C66,numerics) result(handle)
       o = 2*prm%sum_N_sl
       handle = Metal_cpAddPhaseTdt(Metal_ctx, &
                                    int([prm%sum_N_sl,prm%sum_N_tw,prm%N_fam,merge(1,0,prm%Reuss)],C_INT), &
-                                   C66,blob, &
+                                   int(size(blob),C_INT),C66,blob, &
                                    [plasticState(ph)%atol(1),plasticState(ph)%atol(prm%sum_N_sl+1), &
                                     plasticState(ph)%atol(o+1)],numerics)
       reason = 'GPU initialization failed'

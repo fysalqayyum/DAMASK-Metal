@@ -335,6 +335,8 @@ struct cp_model_tdt {
 //> twintrip parameters (phase_mechanical_plastic_twintrip.f90, blob of plastic_twintrip_GPUadd).
 //> Product region kinds k: 0 twin, 1 epsilon, 2 alpha'; plane p = 0..3; region slip system j of kind k
 //> on plane p at (4k+p)*CP_TT_RMAX + j; family parameters of kind k at k*CP_TT_FMAX + f.
+#define CP_BLOB_MAX 65536                                                                          // host: padded blob length; all supported
+                                                                                                    // tdt/twintrip configurations read < 10^4
 #define CP_TT_RMAX  24
 #define CP_TT_FMAX  4
 #define CP_TT_NDMAX 128
@@ -720,8 +722,10 @@ struct cp_model_twintrip {
 #include <vector>
 //> host: unpack the blob of plastic_tdt_GPUadd into the parameters of kernel capacities NSL, NTW, NFAM;
 //> smap: GPU state component (relative to X) of each DAMASK state entry (incl. the 36 of D), sinit:
-//> values of the padded GPU state components
-inline void cp_tdt_pack(const int* dims, const double* C66, const double* blob, const double* atols,
+//> values of the padded GPU state components. Returns the number of blob values read (the caller
+//> passes a blob padded to CP_BLOB_MAX and checks this against the actual length), -1 for an index out
+//> of range.
+inline int cp_tdt_pack(const int* dims, const double* C66, const double* blob, const double* atols,
                       int NSL, int NTW, int NFAM, cp_tdt_param& prm, std::vector<int>& smap, std::vector<double>& sinit) {
   const int ns = dims[0], nt = dims[1], nf = dims[2];
   cp_tdt_param* q = &prm;
@@ -747,7 +751,10 @@ inline void cp_tdt_pack(const int* dims, const double* C66, const double* blob, 
   b += 36*(1+nt);
   auto vec = [&](cp_pair* dst, int n, int cap, double pad) { for (int i = 0; i < cap; ++i) dst[i] = cp_to_pair(i < n ? b[i] : pad); b += n; };
   vec(q->g0, ns, NSL, 0.0); vec(q->n, ns, NSL, 1.0); vec(q->a, ns, NSL, 1.0); vec(q->h0, ns, NSL, 0.0); vec(q->xi_inf, ns, NSL, 1.0);
-  for (int i = 0; i < ns; ++i) q->fam[i] = int(b[i]) - 1;
+  for (int i = 0; i < ns; ++i) {
+    q->fam[i] = int(b[i]) - 1;
+    if (q->fam[i] < 0 || q->fam[i] >= nf) return -1;                                                // index into the state
+  }
   b += ns;
   vec(q->xi_inf_tw, nf, NFAM, 1.0); vec(q->h0_tw, nf, NFAM, 0.0); vec(q->a_tw, nf, NFAM, 1.0);
   vec(q->g0_tw, nt, NTW, 0.0); vec(q->n_tw, nt, NTW, 1.0); vec(q->gch, nt, NTW, 1.0); vec(q->dxi_nuc, nt, NTW, 0.0);
@@ -761,6 +768,7 @@ inline void cp_tdt_pack(const int* dims, const double* C66, const double* blob, 
   for (int k = 0; k < nt; ++k) for (int l = 0; l < nt; ++l) q->h_tt[k+NTW*l] = cp_to_pair(b[k+nt*l]);
   b += nt*nt;
   q->f_n = cp_to_pair(b[0]); q->f_sat = cp_to_pair(b[1]); q->f_min = cp_to_pair(b[2]);
+  b += 3;
   for (int k = 0; k < 36; ++k) q->C66[k] = cp_to_pair(C66[k]);
   q->atol_xi = float(atols[0]); q->atol_gamma = float(atols[1]); q->atol_f = float(atols[2]);
   q->N_sl = ns; q->N_tw = nt; q->N_fam = nf; q->reuss = dims[3];
@@ -780,7 +788,7 @@ inline void cp_tdt_pack(const int* dims, const double* C66, const double* blob, 
   for (int k = 0; k < nt; ++k) smap.push_back(iGR+k);
   for (int k = 0; k < nt; ++k) smap.push_back(ND+k);                                              // f0 (delta state)
   for (int k = 0; k < 36; ++k) smap.push_back(ND+NY+k);
-
+  return int(b - blob);
 }
 
 //> supported twintrip configurations: N_tw, N_tr, alpha', twin/epsilon/alpha' region slip systems and families
@@ -837,8 +845,9 @@ inline void cp_tdt_pack(const int* dims, const double* C66, const double* blob, 
                        X(12,12,1,12,1,12,3,24,2)
 
 //> host: unpack the blob of plastic_twintrip_GPUadd (layout documented there);
-//> dims = [N_tw, N_tr, alpha, N_sys/N_fam of twin, epsilon, alpha' regions (0: elastic), Reuss, sizeState]
-inline void cp_twintrip_pack(const int* dims, const double* C66, const double* blob, const double* atol,
+//> dims = [N_tw, N_tr, alpha, N_sys/N_fam of twin, epsilon, alpha' regions (0: elastic), Reuss, sizeState].
+//> Returns the number of blob values read (see cp_tdt_pack), -1 for an index out of range.
+inline int cp_twintrip_pack(const int* dims, const double* C66, const double* blob, const double* atol,
                              cp_twintrip_param& prm) {
   cp_twintrip_param* q = &prm;
   std::memset(q, 0, sizeof(*q));
@@ -871,7 +880,10 @@ inline void cp_twintrip_pack(const int* dims, const double* C66, const double* b
   vec(q->tau_0, 12); vec(q->B, 12); vec(q->d_caron, 12);
   if (nt) { vec(q->t_tw, 12); vec(q->r_tw, 12); vec(q->gch_tw, 12); }
   if (nr) { vec(q->t_tr, 12); vec(q->r_tr, 12); }
-  for (int k = 0; k < 24; ++k) q->pair[k] = int(b[k]) - 1;
+  for (int k = 0; k < 24; ++k) {
+    q->pair[k] = int(b[k]) - 1;
+    if (q->pair[k] < 0 || q->pair[k] >= 12) return -1;                                              // slip system of the nucleation pair
+  }
   b += 24;
   for (int k = 0; k < 3; ++k) {
     if (NR[k] == 0) continue;
@@ -882,7 +894,10 @@ inline void cp_twintrip_pack(const int* dims, const double* C66, const double* b
       voigt(P, q->rPv + 6*sidx);
     }
     b += 36*NR[k];
-    for (int j = 0; j < NR[k]; ++j) q->rfam[k*CP_TT_RMAX+j] = int(b[j]) - 1;
+    for (int j = 0; j < NR[k]; ++j) {
+      q->rfam[k*CP_TT_RMAX+j] = int(b[j]) - 1;
+      if (q->rfam[k*CP_TT_RMAX+j] < 0 || q->rfam[k*CP_TT_RMAX+j] >= NF[k]) return -1;            // family of a region slip system
+    }
     b += NR[k];
     vec(q->rg0 + k*CP_TT_FMAX, NF[k]); vec(q->rn + k*CP_TT_FMAX, NF[k]); vec(q->rxi_inf + k*CP_TT_FMAX, NF[k]);
     vec(q->rh0 + k*CP_TT_FMAX, NF[k]); vec(q->ra + k*CP_TT_FMAX, NF[k]);
@@ -896,11 +911,13 @@ inline void cp_twintrip_pack(const int* dims, const double* C66, const double* b
                    &q->V_cs, &q->h, &q->V_mol, &q->rho, &q->delta_sl, &q->k_alpha, &q->G_s, &q->Delta_V, &q->mu, &q->nu};
   for (cp_pair* d : sc) *d = cp_to_pair(*b++);
   q->extended = int(b[0]); q->omit_dipoles = int(b[1]);
+  b += 2;
   q->k_B = cp_to_pair(1.380649e-23); q->pi = cp_to_pair(3.14159265358979323846); q->pi_4 = cp_to_pair(0.25*3.14159265358979323846);
   q->gamma_eps = cp_to_pair(std::sqrt(0.125)); q->two_thirds = cp_to_pair(2.0/3.0); q->w_floor = cp_to_pair(1.0e-3);
   for (int k = 0; k < 36; ++k) q->C66[k] = cp_to_pair(C66[k]);
   for (int j = 0; j < dims[10] && j < CP_TT_NDMAX; ++j) q->atol[j] = float(atol[j]);
   q->reuss = dims[9];
+  return int(b - blob);                                                                             // blob values read
 }
 #endif
 

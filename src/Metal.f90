@@ -93,11 +93,12 @@ module Metal
       integer(C_INT) :: handle
     end function Metal_cpAddPhaseModel
 
-    function Metal_cpAddPhaseTdt(ctx,dims,C66,blob,atols,numerics) &
+    function Metal_cpAddPhaseTdt(ctx,dims,n_blob,C66,blob,atols,numerics) &
                                  bind(C, name='C_Metal_cp_add_phase_tdt') result(handle)
       import :: C_PTR, C_INT, C_DOUBLE
       type(C_PTR), value :: ctx
       integer(C_INT), dimension(*), intent(in) :: dims
+      integer(C_INT), value :: n_blob
       real(C_DOUBLE), dimension(*), intent(in) :: C66, blob, atols, numerics
       integer(C_INT) :: handle
     end function Metal_cpAddPhaseTdt
@@ -112,11 +113,11 @@ module Metal
       integer(C_INT) :: handle
     end function Metal_cpAddPhaseTwintrip
 
-    function Metal_cpSubmit(ctx,handle,n,dt,F,Fp0,S0,Lp_guess,state0,T,P,S,Fp,Fe,Lp,state,dPdF,status,iterations) &
+    function Metal_cpSubmit(ctx,handle,n,n_state,dt,F,Fp0,S0,Lp_guess,state0,T,P,S,Fp,Fe,Lp,state,dPdF,status,iterations) &
                             bind(C, name='C_Metal_cp_submit') result(stat)
       import :: C_PTR, C_INT, C_DOUBLE
       type(C_PTR), value :: ctx
-      integer(C_INT), value :: handle, n
+      integer(C_INT), value :: handle, n, n_state
       real(C_DOUBLE), value :: dt
       real(C_DOUBLE), dimension(*), intent(in),    asynchronous :: F, Fp0, S0, Lp_guess, state0
       type(C_PTR), value :: T
