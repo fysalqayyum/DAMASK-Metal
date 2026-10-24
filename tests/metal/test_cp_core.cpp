@@ -1,5 +1,5 @@
 // CPU validation of the model-independent core (src/grid/metal/cp_core.h):
-//  1. phenopowerlaw through the core vs the validated slim kernel (cp_slim.h)
+//  1. phenopowerlaw through the core vs the slim reference kernel (ref_pheno_kernel.h)
 //  2. kinehardening through the core vs an independent port of DAMASK's Fortran
 //     (integrateStress Lp-formulation, integrateStateFPI with damper, plastic_kinehardening_deltaState),
 //     tension -> compression to exercise stress reversals (back-stress flips)
@@ -13,6 +13,7 @@
 #include <random>
 #include <vector>
 #include "../../src/grid/metal/cp_models_composite.h"
+#include "ref_pheno_kernel.h"
 #ifndef MG_GEOMETRY
 #define MG_GEOMETRY "data/Mg_geometry.txt"
 #endif

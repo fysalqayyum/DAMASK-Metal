@@ -611,7 +611,7 @@ module function plastic_phenopowerlaw_GPUadd(ph,C66,numerics) result(handle)
       Hm(ns+1:n,1:ns)   = prm%h_tw_sl;  Hm(ns+1:n,ns+1:n) = prm%h_tw_tw
       zs = [(0.0_pREAL,i=1,ns)]
       zt = [(0.0_pREAL,i=1,nt)]
-      h = Metal_cpAddPhaseModel(Metal_ctx,4_C_INT,int(n,C_INT),C66,P,P_pos,P_neg,Hm, &
+      h = Metal_cpAddPhaseModel(Metal_ctx,METAL_MODEL_PHENOTW,int(n,C_INT),C66,P,P_pos,P_neg,Hm, &
                                 [prm%dot_gamma_0_sl,prm%dot_gamma_0_tw, prm%n_sl,prm%n_tw, prm%a_sl,zt, &
                                  prm%h_0_sl_sl,zt, prm%xi_inf_sl,zt+1.0_pREAL, prm%c_1,zt, prm%c_2,zt+1.0_pREAL, &
                                  prm%f_sat_sl_tw,zt, zs,prm%h_0_tw_sl, zs,prm%h_0_tw_tw, &

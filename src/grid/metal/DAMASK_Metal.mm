@@ -45,8 +45,7 @@ struct CPLaunch {                                                               
 };
 
 struct CPPhase {
-  int                         model;                                                                // 1 phenopowerlaw, 2 kinehardening, 3 dislotungsten,
-                                                                                                    // 4 phenopowerlaw + twins, 5 tdt, 6 twintrip
+  int                         model;                                                                // CP_MODEL_* (DAMASK_Metal.h)
   int                         N;                                                                    // actual slip systems
   int                         Np;                                                                   // padded (kernel) count
   int                         Np_tw = 0, Np_fam = 0;                                                // tdt: twin system and slip family capacities
@@ -583,7 +582,7 @@ int cp_run(Context* ctx, const CPPhase& ph, int n, double dt,
 }
 
 //> padded kernel size for N slip systems (0: unsupported)
-inline int cp_padded(int N) { for (int Np : {12, 24, 30, 48}) if (N <= Np) return Np; return 0; }
+inline int cp_padded(int N) { for (int Np : {12, 24, 30, 48}) if (N <= Np) return Np; return 0; }    // as CP_NP_CASES
 
 //> tdt kernel capacities (slip, twin systems, slip families); 0: unsupported
 inline void cp_tdt_caps(int ns, int nt, int nf, int& NSL, int& NTW, int& NFAM) {
@@ -791,8 +790,8 @@ int C_Metal_cp_add_phase_model(void* p, int model, int N_sl, const double* C66,
     if (Np == 0 || N_sl <= 0) return -2;
     CPPhase ph;
     ph.model = model; ph.N = N_sl; ph.Np = Np;
-    const char* policy = model == 1 ? "cp_model_pheno" : model == 2 ? "cp_model_kineh" : model == 3 ? "cp_model_dtung"
-                       : model == 4 ? "cp_model_phenotw" : nullptr;
+    const char* policy = model == CP_MODEL_PHENO ? "cp_model_pheno" : model == CP_MODEL_KINEH ? "cp_model_kineh"
+                       : model == CP_MODEL_DTUNG ? "cp_model_dtung" : model == CP_MODEL_PHENOTW ? "cp_model_phenotw" : nullptr;
     if (!policy) return -2;
     if (!cp_pipelines(ctx, std::string(policy) + "<" + std::to_string(Np) + ">", ph)) return -3;
 
@@ -810,12 +809,12 @@ int C_Metal_cp_add_phase_model(void* p, int model, int N_sl, const double* C66,
     auto vec = [&](cp_pair* dst, int k, double pad) {
       for (int i = 0; i < Np; ++i) dst[i] = cp_to_pair(i < N_sl ? vecs[k*N_sl + i] : pad);
     };
-    if (model == 1) {
+    if (model == CP_MODEL_PHENO) {
       ph.param = [ctx->device newBufferWithLength:sizeof(cp_pheno_param) options:MTLResourceStorageModeShared];
       cp_pheno_param* prm = static_cast<cp_pheno_param*>(ph.param.contents);
       fill_common(prm);
       vec(prm->dot_gamma_0, 0, 0.0); vec(prm->n, 1, 1.0); vec(prm->a, 2, 1.0); vec(prm->h_0, 3, 0.0); vec(prm->xi_inf, 4, 1.0);
-    } else if (model == 4) {
+    } else if (model == CP_MODEL_PHENOTW) {
       ph.param = [ctx->device newBufferWithLength:sizeof(cp_phenotw_param) options:MTLResourceStorageModeShared];
       cp_phenotw_param* prm = static_cast<cp_phenotw_param*>(ph.param.contents);
       fill_common(prm);
@@ -825,7 +824,7 @@ int C_Metal_cp_add_phase_model(void* p, int model, int N_sl, const double* C66,
       vec(prm->gamma_char, 12, 1.0);
       prm->N_slip = int(scalars[2]);
       prm->N_twin = N_sl - prm->N_slip;
-    } else if (model == 3) {
+    } else if (model == CP_MODEL_DTUNG) {
       ph.param = [ctx->device newBufferWithLength:sizeof(cp_dtung_param) options:MTLResourceStorageModeShared];
       cp_dtung_param* prm = static_cast<cp_dtung_param*>(ph.param.contents);
       fill_common(prm);
@@ -863,7 +862,7 @@ int C_Metal_cp_add_phase_tdt(void* p, const int* dims, const double* C66, const 
     cp_tdt_caps(ns, nt, nf, NSL, NTW, NFAM);
     if (NSL == 0 || NTW == 0 || NFAM == 0 || ns <= 0 || nt <= 0 || nf <= 0) return -2;
     CPPhase ph;
-    ph.model = 5; ph.N = ns; ph.Np = NSL; ph.Np_tw = NTW; ph.Np_fam = NFAM;
+    ph.model = CP_MODEL_TDT; ph.N = ns; ph.Np = NSL; ph.Np_tw = NTW; ph.Np_fam = NFAM;
     std::string type = "cp_model_tdt<" + std::to_string(NSL) + "," + std::to_string(NTW) + "," + std::to_string(NFAM) + ">";
     if (!cp_pipelines(ctx, type, ph)) return -3;
 
@@ -895,7 +894,7 @@ int C_Metal_cp_add_phase_twintrip(void* p, const int* dims, int n_blob, const do
   @autoreleasepool {
     if (!cp_init_embedded(ctx)) return -1;
     CPPhase ph;
-    ph.model = 6; ph.N = 12; ph.Np = 12;
+    ph.model = CP_MODEL_TWINTRIP; ph.N = 12; ph.Np = 12;
     for (int k = 0; k < 9; ++k) ph.tt[k] = dims[k];
     ph.n_state = dims[10] + 60 + dims[0] + dims[1] + dims[2];
     bool known = false;
@@ -910,7 +909,7 @@ int C_Metal_cp_add_phase_twintrip(void* p, const int* dims, int n_blob, const do
 
     if (const char* cap = getenv("DAMASK_METAL_CAPTURE"))                                           // diagnostics: phase for replay (bench_cp_replay)
       if (FILE* fo = std::fopen((std::string(cap) + ".ttphase").c_str(), "wb")) {
-        const int model = 6;
+        const int model = CP_MODEL_TWINTRIP;
         std::fwrite(&model, sizeof(int), 1, fo); std::fwrite(dims, sizeof(int), 11, fo); std::fwrite(&n_blob, sizeof(int), 1, fo);
         std::fwrite(C66, sizeof(double), 36, fo); std::fwrite(blob, sizeof(double), n_blob, fo);
         std::fwrite(atol, sizeof(double), dims[10], fo); std::fwrite(numerics, sizeof(double), 7, fo); std::fclose(fo);
@@ -966,18 +965,19 @@ int C_Metal_cp_integrate(void* p, int phase, int n, double dt,
 #define CP_CASE(MODEL, POLICY, NP)                                                                  \
     if (ph.model == MODEL && ph.Np == NP)                                                           \
       return cp_run<POLICY<NP>>(ctx, ph, n, dt, F, Fp0, S0, Lp_guess, state0, T, P, S, Fp, Fe, Lp, state, dPdF, status, iterations);
-    CP_CASE(1, cp_model_pheno, 12) CP_CASE(1, cp_model_pheno, 24) CP_CASE(1, cp_model_pheno, 30) CP_CASE(1, cp_model_pheno, 48)
-    CP_CASE(2, cp_model_kineh, 12) CP_CASE(2, cp_model_kineh, 24) CP_CASE(2, cp_model_kineh, 30) CP_CASE(2, cp_model_kineh, 48)
-    CP_CASE(3, cp_model_dtung, 12) CP_CASE(3, cp_model_dtung, 24) CP_CASE(3, cp_model_dtung, 30) CP_CASE(3, cp_model_dtung, 48)
-    CP_CASE(4, cp_model_phenotw, 12) CP_CASE(4, cp_model_phenotw, 24) CP_CASE(4, cp_model_phenotw, 30) CP_CASE(4, cp_model_phenotw, 48)
+#define CP_NP_CASES(MODEL, POLICY)                                                                  \
+    CP_CASE(MODEL, POLICY, 12) CP_CASE(MODEL, POLICY, 24) CP_CASE(MODEL, POLICY, 30) CP_CASE(MODEL, POLICY, 48)
+    CP_NP_CASES(CP_MODEL_PHENO, cp_model_pheno) CP_NP_CASES(CP_MODEL_KINEH, cp_model_kineh)
+    CP_NP_CASES(CP_MODEL_DTUNG, cp_model_dtung) CP_NP_CASES(CP_MODEL_PHENOTW, cp_model_phenotw)
+#undef CP_NP_CASES
 #undef CP_CASE
 #define CP_TDT_CASE(A, B, C)                                                                        \
-    if (ph.model == 5 && ph.Np == A && ph.Np_tw == B && ph.Np_fam == C)                              \
+    if (ph.model == CP_MODEL_TDT && ph.Np == A && ph.Np_tw == B && ph.Np_fam == C)                   \
       return cp_run<cp_model_tdt<A,B,C>>(ctx, ph, n, dt, F, Fp0, S0, Lp_guess, state0, T, P, S, Fp, Fe, Lp, state, dPdF, status, iterations);
     CP_TDT_CASES(CP_TDT_CASE)
 #undef CP_TDT_CASE
 #define CP_TT_CASE(q1,q2,q3,q4,q5,q6,q7,q8,q9)                                                               \
-    if (ph.model == 6 && ph.tt[0]==q1 && ph.tt[1]==q2 && ph.tt[2]==q3 && ph.tt[3]==q4 && ph.tt[4]==q5     \
+    if (ph.model == CP_MODEL_TWINTRIP && ph.tt[0]==q1 && ph.tt[1]==q2 && ph.tt[2]==q3 && ph.tt[3]==q4 && ph.tt[4]==q5     \
         && ph.tt[5]==q6 && ph.tt[6]==q7 && ph.tt[7]==q8 && ph.tt[8]==q9)                                 \
       return cp_run<cp_model_twintrip<q1,q2,q3,q4,q5,q6,q7,q8,q9>>(ctx, ph, n, dt, F, Fp0, S0, Lp_guess, state0, T, P, S, Fp, Fe, Lp, state, dPdF, status, iterations);
     CP_TT_CASES(CP_TT_CASE)

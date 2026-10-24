@@ -490,7 +490,7 @@ module function plastic_kinehardening_GPUadd(ph,C66,numerics) result(handle)
     elseif (any(dNeq(prm%P_nS_pos,prm%P)) .or. any(dNeq(prm%P_nS_neg,-prm%P))) then
       reason = 'non-Schmid law'
     else
-      handle = Metal_cpAddPhaseModel(Metal_ctx,2_C_INT,int(prm%sum_N_sl,C_INT),C66, &
+      handle = Metal_cpAddPhaseModel(Metal_ctx,METAL_MODEL_KINEH,int(prm%sum_N_sl,C_INT),C66, &
                                      prm%P,prm%P_nS_pos,prm%P_nS_neg,prm%h_sl_sl, &
                                      [prm%dot_gamma_0,prm%n,prm%h_0_xi,prm%h_0_chi, &
                                       prm%h_inf_xi,prm%h_inf_chi,prm%xi_inf,prm%chi_inf], &

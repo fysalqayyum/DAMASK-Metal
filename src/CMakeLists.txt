@@ -34,7 +34,7 @@ foreach(VARIANT GRID MESH TEST)
     if(METAL AND VARIANT STREQUAL "GRID")
       set(msl_dir ${CMAKE_CURRENT_SOURCE_DIR}/grid/metal)
       set(msl_sources ${msl_dir}/spectral.metal)
-      set(msl_sources_cp ${msl_dir}/cp_gpu_config.h ${msl_dir}/df64.h ${msl_dir}/cp_kernel.h ${msl_dir}/cp_slim.h ${msl_dir}/cp_core.h ${msl_dir}/cp_models_composite.h ${msl_dir}/cp.metal)               # dependency order
+      set(msl_sources_cp ${msl_dir}/df64.h ${msl_dir}/cp_kernel.h ${msl_dir}/cp_slim.h ${msl_dir}/cp_core.h ${msl_dir}/cp_models_composite.h ${msl_dir}/cp.metal)               # dependency order
       string(REPLACE ";" "|" msl_sources_arg "${msl_sources}")
       string(REPLACE ";" "|" msl_sources_cp_arg "${msl_sources_cp}")
       set(msl_header ${CMAKE_CURRENT_BINARY_DIR}/metal/metal_sources.h)

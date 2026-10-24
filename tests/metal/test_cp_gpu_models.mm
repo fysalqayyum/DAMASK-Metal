@@ -14,9 +14,8 @@
 #include <vector>
 #include "../../src/grid/metal/DAMASK_Metal.h"
 #include "../../src/grid/metal/cp_core.h"
+#include "metal_test_util.h"
 
-static std::string slurp(const std::string& f) { std::ifstream s(f); std::stringstream b; b << s.rdbuf(); return b.str(); }
-static std::string strip(std::string s) { size_t p; while ((p = s.find("#include \"")) != std::string::npos) s.erase(p, s.find('\n', p) - p); return s; }
 static cp_pair pr(double x) { cp_pair p; p.hi = float(x); p.lo = float(x - double(p.hi)); return p; }
 static double rel(const double* a, const double* b, int n) {
   double d = 0, s = 0; for (int k = 0; k < n; ++k) { d += (a[k]-b[k])*(a[k]-b[k]); s += b[k]*b[k]; }
@@ -124,8 +123,7 @@ static int run(void* ctx, const char* name, int model, int N, const std::vector<
 int main(int argc, char** argv) {
   if (argc < 2) { std::fprintf(stderr, "usage: %s src/grid/metal\n", argv[0]); return 2; }
   std::string d = argv[1];
-  std::string src = strip(slurp(d + "/cp_gpu_config.h") + slurp(d + "/df64.h") + slurp(d + "/cp_kernel.h")
-                        + slurp(d + "/cp_slim.h") + slurp(d + "/cp_core.h") + slurp(d + "/cp_models_composite.h") + slurp(d + "/cp.metal"));
+  std::string src = cp_shader_source(d);
   void* ctx = C_Metal_new(8, 8, 8, slurp(d + "/spectral.metal").c_str());
   if (!ctx || C_Metal_cp_set_source(ctx, src.c_str())) { std::printf("Metal init failed\n"); return 1; }
   int fails = 0;
@@ -140,7 +138,7 @@ int main(int argc, char** argv) {
     };
     const double Fdot[9] = {4e-4, 0, 0, 0, -2e-4, 0, 0, 0, -2e-4};
     auto init = [&](std::vector<double>& st) { for (int i = 0; i < N; ++i) st[i] = 0.070e9; };
-    fails += run<cp_model_kineh<12>>(ctx, "A. kinehardening (12)", 2, N, v, {1.0, 1e-6}, fill, init, Fdot, 0.5, 30, 120, true, 0.0);
+    fails += run<cp_model_kineh<12>>(ctx, "A. kinehardening (12)", CP_MODEL_KINEH, N, v, {1.0, 1e-6}, fill, init, Fdot, 0.5, 30, 120, true, 0.0);
   }
   {
     const int N = 9;
@@ -151,7 +149,7 @@ int main(int argc, char** argv) {
     };
     const double Fdot[9] = {1e-3, 0, 0, 0, -5e-4, 0, 0, 0, -5e-4};
     auto init = [&](std::vector<double>& st) { for (int i = 0; i < N; ++i) st[i] = 31e6; };
-    fails += run<cp_model_pheno<9>>(ctx, "B. phenopowerlaw (9, padded to 12)", 1, N, v, {1.0, 1e-6}, fill, init, Fdot, 1.0, 40, 120, false, 0.0);
+    fails += run<cp_model_pheno<9>>(ctx, "B. phenopowerlaw (9, padded to 12)", CP_MODEL_PHENO, N, v, {1.0, 1e-6}, fill, init, Fdot, 1.0, 40, 120, false, 0.0);
   }
   {
     const int N = 12; const double b = 2.72e-10;
@@ -176,7 +174,7 @@ int main(int argc, char** argv) {
     };
     auto init = [&](std::vector<double>& st) { for (int i = 0; i < N; ++i) { st[i] = 1e12; st[N+i] = 1.0; } };
     const double Fdot[9] = {2e-4, 0, 0, 0, -1e-4, 0, 0, 0, -1e-4}, Cel[3] = {523e9, 203e9, 160e9};
-    fails += run<cp_model_dtung<12>>(ctx, "C. dislotungsten (12, T = 300 K)", 3, N, v, sc, fill, init, Fdot, 0.5, 30, 120, false, 300.0, Cel);
+    fails += run<cp_model_dtung<12>>(ctx, "C. dislotungsten (12, T = 300 K)", CP_MODEL_DTUNG, N, v, sc, fill, init, Fdot, 0.5, 30, 120, false, 300.0, Cel);
   }
   C_Metal_delete(ctx);
   return fails;

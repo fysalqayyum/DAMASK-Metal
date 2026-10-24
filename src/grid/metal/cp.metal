@@ -4,10 +4,9 @@
 //> @details Compiled once per policy type on first use: the host prepends
 //>   #define CP_MODEL_TYPE <policy>   (cp_model_pheno<12>, cp_model_tdt<18,12,6>, ...)
 //> Residuals/state in df64, Jacobian and LU in float, tangent in float. Component-major (SoA) device
-//> arrays, see cp_layout. Concatenated after cp_gpu_config.h, df64.h, cp_kernel.h, cp_slim.h,
-//> cp_core.h, cp_models_composite.h (cmake/EmbedMetal.cmake).
+//> arrays, see cp_layout. Concatenated after df64.h, cp_kernel.h, cp_slim.h, cp_core.h,
+//> cp_models_composite.h (cmake/EmbedMetal.cmake).
 //--------------------------------------------------------------------------------------------------
-#include "cp_gpu_config.h"
 #include "df64.h"
 #include "cp_kernel.h"
 #include "cp_slim.h"

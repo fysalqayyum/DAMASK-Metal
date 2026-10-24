@@ -1,5 +1,5 @@
 // Step B: constitutive update on the GPU (df64 residuals, float Jacobian; src/grid/metal/cp.metal via
-// DAMASK_Metal.mm) vs. the same algorithm in double on the CPU (cp_kernel.h, Step A reference).
+// DAMASK_Metal.mm) vs. the same algorithm in double on the CPU (tests/metal/ref_pheno_kernel.h).
 // Inputs are realistic: 40 grains x 120 increments of tension (examples/grid material, Al, 12 slip
 // systems) recorded from the CPU double run; all steps are then integrated as one GPU batch.
 // usage: test_cp_gpu <src/grid/metal directory> [n_points_for_timing]
@@ -14,21 +14,16 @@
 #include <string>
 #include <vector>
 #include "../../src/grid/metal/DAMASK_Metal.h"
-#include "../../src/grid/metal/cp_slim.h"
+#include "ref_pheno_kernel.h"
+#include "metal_test_util.h"
 
 static const int N = 12;
 
-static std::string slurp(const std::string& f) { std::ifstream s(f); std::stringstream b; b << s.rdbuf(); return b.str(); }
-static std::string strip_local_includes(std::string s) {
-  size_t p;
-  while ((p = s.find("#include \"")) != std::string::npos) s.erase(p, s.find('\n', p) - p);
-  return s;
-}
 
 int main(int argc, char** argv) {
   if (argc < 2) { std::fprintf(stderr, "usage: %s src/grid/metal [n_timing]\n", argv[0]); return 2; }
   std::string dir = argv[1];
-  std::string src = strip_local_includes(slurp(dir + "/cp_gpu_config.h") + slurp(dir + "/df64.h") + slurp(dir + "/cp_kernel.h") + slurp(dir + "/cp_slim.h") + slurp(dir + "/cp_core.h") + slurp(dir + "/cp_models_composite.h") + slurp(dir + "/cp.metal"));
+  std::string src = cp_shader_source(dir);
   const int n_timing = argc > 2 ? std::atoi(argv[2]) : 262144;
 
   // material: examples/grid/material.yaml (Al, cF, phenopowerlaw), double precision

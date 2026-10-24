@@ -549,7 +549,7 @@ module function plastic_dislotungsten_GPUadd(ph,C66,numerics) result(handle)
     if (prm%sum_N_sl == 0 .or. prm%sum_N_sl > 48) then
       reason = 'number of slip systems'
     else
-      handle = Metal_cpAddPhaseModel(Metal_ctx,3_C_INT,int(prm%sum_N_sl,C_INT),C66, &
+      handle = Metal_cpAddPhaseModel(Metal_ctx,METAL_MODEL_DTUNG,int(prm%sum_N_sl,C_INT),C66, &
                                      prm%P_sl,prm%P_nS_pos,prm%P_nS_neg,prm%h_sl_sl, &
                                      [prm%b_sl,prm%Q_s,prm%i_sl,prm%tau_Peierls,prm%p,prm%q,prm%h,prm%w, &
                                       prm%omega,prm%B,prm%d_caron,prm%f_at,reshape(prm%forestProjection,[prm%sum_N_sl**2])], &

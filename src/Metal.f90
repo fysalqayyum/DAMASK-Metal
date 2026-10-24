@@ -13,6 +13,13 @@ module Metal
   private
 
 #if defined(METAL) && defined(GRID)
+  integer(C_INT), parameter, public :: &                                                            !< constitutive model ids, as CP_MODEL_* in DAMASK_Metal.h
+    METAL_MODEL_PHENO    = 1_C_INT, &
+    METAL_MODEL_KINEH    = 2_C_INT, &
+    METAL_MODEL_DTUNG    = 3_C_INT, &
+    METAL_MODEL_PHENOTW  = 4_C_INT, &
+    METAL_MODEL_TDT      = 5_C_INT, &
+    METAL_MODEL_TWINTRIP = 6_C_INT
   type(C_PTR), public :: &
     Metal_ctx = C_NULL_PTR                                                                          !< backend, created by spectral_utilities_init
   integer, public :: &

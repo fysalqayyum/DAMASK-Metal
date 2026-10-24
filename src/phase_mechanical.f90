@@ -27,6 +27,9 @@ submodule(phase) mechanical
     GPU_handle                                                                                      !< GPU constitutive model of each phase (< 0: CPU only)
   real(pREAL), dimension(:,:,:), allocatable :: &
     GPU_C66                                                                                         !< stiffness uploaded to the GPU
+  logical, dimension(:), allocatable :: &
+    GPU_CfromState, &                                                                               !< stiffness homogenized on the GPU from the state (GPU_C66: parent)
+    GPU_FiIsotropic                                                                                 !< eigenstrain Fi = j(state) I computed on the GPU (else Fi = I)
   type :: tGPUtangent
     real(C_FLOAT), dimension(:,:,:,:,:), allocatable :: dPdF                                        !< analytic tangent computed on the GPU
     logical,       dimension(:),         allocatable :: valid                                       !< dPdF belongs to the current state of the entry
@@ -1611,15 +1614,14 @@ module subroutine phase_mechanical_constitutive_GPU(Delta_t,ce_start,ce_end,elig
       if (take(ce)) take(ce) = material_ID_phase(1,ce) == ph
       if (take(ce)) then
         en = material_entry_phase(1,ce)
-        if (mechanical_plasticity_type(ph) == MECHANICAL_PLASTICITY_TWINTRIP) then                    ! isotropic eigenstrain Fi = j(state) I
+        if (GPU_FiIsotropic(ph)) then                                                               ! isotropic eigenstrain Fi = j(state) I
           take(ce) = all(dEq0(phase_mechanical_Fi0(ph)%data(1:3,1:3,en) &
                               - phase_mechanical_Fi0(ph)%data(1,1,en)*math_I3,1.0e-10_pREAL))
         else
           take(ce) = all(dEq0(phase_mechanical_Fi0(ph)%data(1:3,1:3,en) - math_I3,1.0e-10_pREAL))        ! O.inv(V_e).O^T = I up to rounding
         end if
         if (take(ce)) then
-          if (any(mechanical_plasticity_type(ph) == [MECHANICAL_PLASTICITY_TDT, &
-                                                     MECHANICAL_PLASTICITY_TWINTRIP])) then           ! stiffness from the state: parent as uploaded
+          if (GPU_CfromState(ph)) then                                                              ! stiffness from the state: parent as uploaded
             take(ce) = all(dEq(elastic_C66(ph,en),GPU_C66(1:6,1:6,ph)))
           else
             take(ce) = all(dEq(phase_damage_C66(phase_homogenizedC66(ph,en),ph,en),GPU_C66(1:6,1:6,ph)))
@@ -1710,31 +1712,35 @@ module subroutine phase_mechanical_constitutive_GPU(Delta_t,ce_start,ce_end,elig
     allocate(GPU_tangent(size(GPU_handle)))
     allocate(GPU_work(size(GPU_handle)))
     allocate(GPU_ndep(size(GPU_handle)), source=0)
+    allocate(GPU_CfromState(size(GPU_handle)), source=.false.)
+    allocate(GPU_FiIsotropic(size(GPU_handle)), source=.false.)
 
-    do ph = 1, size(GPU_handle)
-      if (all(mechanical_plasticity_type(ph) /= [MECHANICAL_PLASTICITY_PHENOPOWERLAW, &
-                                                 MECHANICAL_PLASTICITY_KINEHARDENING, &
-                                                 MECHANICAL_PLASTICITY_DISLOTUNGSTEN, &
-                                                 MECHANICAL_PLASTICITY_TDT, &
-                                                 MECHANICAL_PLASTICITY_TWINTRIP])) cycle
+    do ph = 1, size(GPU_handle)                                                                     ! models with a GPU policy (cp_core.h, cp_models_composite.h)
       if (eigen_active(ph) .or. damage_type(ph) /= UNDEFINED) cycle
       if (size(phase_mechanical_F(ph)%data,3) == 0) cycle
-      GPU_C66(1:6,1:6,ph) = phase_damage_C66(phase_homogenizedC66(ph,1),ph,1)
       select case (mechanical_plasticity_type(ph))
         case (MECHANICAL_PLASTICITY_PHENOPOWERLAW)
+          GPU_C66(1:6,1:6,ph) = phase_damage_C66(phase_homogenizedC66(ph,1),ph,1)
           GPU_handle(ph) = plastic_phenopowerlaw_GPUadd(ph,GPU_C66(1:6,1:6,ph),numerics)
         case (MECHANICAL_PLASTICITY_KINEHARDENING)
+          GPU_C66(1:6,1:6,ph) = phase_damage_C66(phase_homogenizedC66(ph,1),ph,1)
           GPU_handle(ph) = plastic_kinehardening_GPUadd(ph,GPU_C66(1:6,1:6,ph),numerics)
         case (MECHANICAL_PLASTICITY_DISLOTUNGSTEN)
+          GPU_C66(1:6,1:6,ph) = phase_damage_C66(phase_homogenizedC66(ph,1),ph,1)
           GPU_handle(ph) = plastic_dislotungsten_GPUadd(ph,GPU_C66(1:6,1:6,ph),numerics)
           GPU_ndep(ph) = 2*plasticState(ph)%sizeState/3                                              ! [tau_pass, Lambda_sl], 2 x N_sl
         case (MECHANICAL_PLASTICITY_TDT)
+          GPU_CfromState(ph) = .true.
           GPU_C66(1:6,1:6,ph) = elastic_C66(ph,1)                                                   ! parent; homogenized on the GPU
           GPU_handle(ph) = plastic_tdt_GPUadd(ph,GPU_C66(1:6,1:6,ph),numerics_twin)
           GPU_ndep(ph) = 36                                                                         ! homogenized C66
         case (MECHANICAL_PLASTICITY_TWINTRIP)
+          GPU_CfromState(ph) = .true.
+          GPU_FiIsotropic(ph) = .true.                                                              ! alpha' dilatation
           GPU_C66(1:6,1:6,ph) = elastic_C66(ph,1)                                                   ! austenite; homogenized on the GPU
           GPU_handle(ph) = plastic_twintrip_GPUadd(ph,GPU_C66(1:6,1:6,ph),numerics_twin,GPU_ndep(ph))
+        case default
+          cycle                                                                                     ! no GPU policy
       end select
       if (GPU_handle(ph) >= 0 .and. Metal_tangent) then
         allocate(GPU_tangent(ph)%dPdF(3,3,3,3,size(phase_mechanical_F(ph)%data,3)))

@@ -14,9 +14,8 @@
 #include <string>
 #include <vector>
 #include "../../src/grid/metal/DAMASK_Metal.h"
+#include "metal_test_util.h"
 
-static std::string slurp(const std::string& f) { std::ifstream s(f); std::stringstream b; b << s.rdbuf(); return b.str(); }
-static std::string strip(std::string s) { size_t p; while ((p = s.find("#include \"")) != std::string::npos) s.erase(p, s.find('\n', p) - p); return s; }
 
 int main(int argc, char** argv) {
   if (argc < 3) { std::fprintf(stderr, "usage: %s src/grid/metal base [R] [--save-ref]\n", argv[0]); return 2; }
@@ -28,7 +27,7 @@ int main(int argc, char** argv) {
   const bool tt = !fp && (fp = std::fopen((base + ".ttphase").c_str(), "rb"));                    // twintrip
   FILE* fb = std::fopen((base + ".batch").c_str(), "rb");
   if (!fp || !fb) { std::fprintf(stderr, "missing %s.phase/.ttphase/.batch\n", base.c_str()); return 1; }
-  int dims[11], nb, model = 5;
+  int dims[11], nb, model = CP_MODEL_TDT;
   double C66[36], atols[3], numerics[7];
   std::vector<double> atolv;
   bool okr = (!tt || std::fread(&model, sizeof(int), 1, fp) == 1)
@@ -53,8 +52,7 @@ int main(int argc, char** argv) {
     n *= k;
   }
 
-  std::string src = std::string(getenv("BENCH_DEFINES") ? getenv("BENCH_DEFINES") : "") + "\n" + strip(slurp(d + "/cp_gpu_config.h") + slurp(d + "/df64.h") + slurp(d + "/cp_kernel.h") + slurp(d + "/cp_slim.h")
-                        + slurp(d + "/cp_core.h") + slurp(d + "/cp_models_composite.h") + slurp(d + "/cp.metal"));
+  std::string src = std::string(getenv("BENCH_DEFINES") ? getenv("BENCH_DEFINES") : "") + "\n" + cp_shader_source(d);
   void* ctx = C_Metal_new(8, 8, 8, slurp(d + "/spectral.metal").c_str());
   if (!ctx || C_Metal_cp_set_source(ctx, src.c_str())) { std::printf("Metal init failed\n"); return 1; }
   if (getenv("BENCH_NSTATE")) numerics[6] = atof(getenv("BENCH_NSTATE"));                          // state iteration cap
