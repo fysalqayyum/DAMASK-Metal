@@ -16,7 +16,8 @@ Faisal Qayyum, starting October 2026; the complete history is in this repository
 - Tests and quality checks: `tests/metal/`
 - Benchmarks: `benchmarks/`
 - Documentation and project files: `README.md` (the original is kept as `README-DAMASK.md`),
-  `docs/`, `NOTICE.md`, `CHANGELOG-Metal.md`, `CONTRIBUTING.md`, `env/DAMASK-Metal.sh`
+  `docs/`, `NOTICE.md`, `CHANGELOG-Metal.md`, `CONTRIBUTING.md`, `SECURITY.md`, `env/DAMASK-Metal.sh`
+- Continuous integration: `.github/workflows/build.yml`
 
 ## Modified DAMASK files
 
