@@ -33,6 +33,14 @@ submodule(phase:mechanical) plastic
         myPlasticity
     end function plastic_dislotungsten_init
 
+    module function plastic_tdt_init()           result(myPlasticity)
+      logical, dimension(:), allocatable :: myPlasticity
+    end function plastic_tdt_init
+
+    module function plastic_twintrip_init()      result(myPlasticity)
+      logical, dimension(:), allocatable :: myPlasticity
+    end function plastic_twintrip_init
+
     module function plastic_nonlocal_init()      result(myPlasticity)
       logical, dimension(:), allocatable :: &
         myPlasticity
@@ -85,6 +93,21 @@ submodule(phase:mechanical) plastic
         ph, &
         en
     end subroutine dislotwin_LpAndItsTangent
+
+    module subroutine twintrip_LpAndItsTangent(Lp,dLp_dMp,Mp,ph,en)
+      real(pREAL), dimension(3,3),     intent(out) :: Lp
+      real(pREAL), dimension(3,3,3,3), intent(out) :: dLp_dMp
+      real(pREAL), dimension(3,3),     intent(in)  :: Mp
+      integer,                         intent(in)  :: ph, en
+    end subroutine twintrip_LpAndItsTangent
+
+    pure module subroutine tdt_LpAndItsTangent(Lp,dLp_dMp,Mp,Delta_t,ph,en)
+      real(pREAL), dimension(3,3),     intent(out) :: Lp
+      real(pREAL), dimension(3,3,3,3), intent(out) :: dLp_dMp
+      real(pREAL), dimension(3,3),     intent(in)  :: Mp
+      real(pREAL),                     intent(in)  :: Delta_t
+      integer,                         intent(in)  :: ph, en
+    end subroutine tdt_LpAndItsTangent
 
     pure module subroutine dislotungsten_LpAndItsTangent(Lp,dLp_dMp,Mp,ph,en)
       real(pREAL), dimension(3,3),     intent(out) :: &
@@ -150,6 +173,40 @@ submodule(phase:mechanical) plastic
       real(pREAL), dimension(plasticState(ph)%sizeDotState) :: &
         dotState
     end function dislotwin_dotState
+
+    module function tdt_dotState(Mp,Delta_t,ph,en) result(dotState)
+      real(pREAL), dimension(3,3), intent(in) :: Mp
+      real(pREAL),                 intent(in) :: Delta_t
+      integer,                     intent(in) :: ph, en
+      real(pREAL), dimension(plasticState(ph)%sizeDotState) :: dotState
+    end function tdt_dotState
+
+    module function tdt_dotStateDiag(Mp,Delta_t,ph,en) result(Jd)
+      real(pREAL), dimension(3,3), intent(in) :: Mp
+      real(pREAL),                 intent(in) :: Delta_t
+      integer,                     intent(in) :: ph, en
+      real(pREAL), dimension(plasticState(ph)%sizeDotState) :: Jd
+    end function tdt_dotStateDiag
+
+    module subroutine tdt_deltaState(ph,en)
+      integer, intent(in) :: ph, en
+    end subroutine tdt_deltaState
+
+    module function twintrip_dotState(Mp,ph,en) result(dotState)
+      real(pREAL), dimension(3,3), intent(in) :: Mp
+      integer,                     intent(in) :: ph, en
+      real(pREAL), dimension(plasticState(ph)%sizeDotState) :: dotState
+    end function twintrip_dotState
+
+    module function twintrip_dotStateDiag(Mp,ph,en) result(Jd)
+      real(pREAL), dimension(3,3), intent(in) :: Mp
+      integer,                     intent(in) :: ph, en
+      real(pREAL), dimension(plasticState(ph)%sizeDotState) :: Jd
+    end function twintrip_dotStateDiag
+
+    module subroutine twintrip_dependentState(ph,en)
+      integer, intent(in) :: ph, en
+    end subroutine twintrip_dependentState
 
     module function dislotungsten_dotState(Mp,ph,en) result(dotState)
       real(pREAL), dimension(3,3),  intent(in) :: &
@@ -226,6 +283,8 @@ module subroutine plastic_init
   where(plastic_dislotwin_init())         mechanical_plasticity_type = MECHANICAL_PLASTICITY_DISLOTWIN
   where(plastic_dislotungsten_init())     mechanical_plasticity_type = MECHANICAL_PLASTICITY_DISLOTUNGSTEN
   where(plastic_nonlocal_init())          mechanical_plasticity_type = MECHANICAL_PLASTICITY_NONLOCAL
+  where(plastic_tdt_init())               mechanical_plasticity_type = MECHANICAL_PLASTICITY_TDT
+  where(plastic_twintrip_init())          mechanical_plasticity_type = MECHANICAL_PLASTICITY_TWINTRIP
 
   if (any(mechanical_plasticity_type == UNDEFINED)) call IO_error(200, label1='plasticity')
 
@@ -237,9 +296,11 @@ end subroutine plastic_init
 ! Mp in, dLp_dMp out
 !--------------------------------------------------------------------------------------------------
 module subroutine plastic_LpAndItsTangents(Lp, dLp_dS, dLp_dFi, &
-                                           S, Fi, ph,en)
+                                           S, Fi, Delta_t, ph,en)
   integer, intent(in) :: &
     ph,en
+  real(pREAL),   intent(in) :: &
+    Delta_t
   real(pREAL),   intent(in),  dimension(3,3) :: &
     S, &                                                                                            !< 2nd Piola-Kirchhoff stress
     Fi                                                                                              !< intermediate deformation gradient
@@ -284,6 +345,12 @@ module subroutine plastic_LpAndItsTangents(Lp, dLp_dS, dLp_dFi, &
 
       case (MECHANICAL_PLASTICITY_DISLOTUNGSTEN) plasticType
         call dislotungsten_LpAndItsTangent(Lp,dLp_dMp,Mp,ph,en)
+
+      case (MECHANICAL_PLASTICITY_TDT) plasticType
+        call tdt_LpAndItsTangent(Lp,dLp_dMp,Mp,Delta_t,ph,en)
+
+      case (MECHANICAL_PLASTICITY_TWINTRIP) plasticType
+        call twintrip_LpAndItsTangent(Lp,dLp_dMp,Mp,ph,en)
 
     end select plasticType
 
@@ -335,6 +402,12 @@ module function plastic_dotState(subdt,ph,en) result(dotState)
       case (MECHANICAL_PLASTICITY_DISLOTUNGSTEN) plasticType
         dotState = dislotungsten_dotState(Mp,ph,en)
 
+      case (MECHANICAL_PLASTICITY_TDT) plasticType
+        dotState = tdt_dotState(Mp,subdt,ph,en)
+
+      case (MECHANICAL_PLASTICITY_TWINTRIP) plasticType
+        dotState = twintrip_dotState(Mp,ph,en)
+
       case (MECHANICAL_PLASTICITY_NONLOCAL) plasticType
         call nonlocal_dotState(Mp,subdt,ph,en)
         dotState = plasticState(ph)%dotState(:,en)
@@ -343,6 +416,39 @@ module function plastic_dotState(subdt,ph,en) result(dotState)
   end if
 
 end function plastic_dotState
+
+
+!--------------------------------------------------------------------------------------------------
+!> @brief Preconditioner of the state update (models with stiff self-coupled state): factor
+!> 1/(1 - dt d(dotState_j)/d(state_j)) applied to the fixed-point correction, 1 for all other models.
+!--------------------------------------------------------------------------------------------------
+module function plastic_statePreconditioner(subdt,ph,en) result(pc)
+
+  integer, intent(in) :: &
+    ph, &
+    en
+  real(pREAL),  intent(in) :: &
+    subdt
+  real(pREAL), dimension(plasticState(ph)%sizeDotState) :: &
+    pc
+
+  real(pREAL), dimension(3,3) :: &
+    Mp
+
+
+  if (mechanical_plasticity_type(ph) == MECHANICAL_PLASTICITY_TDT) then
+    Mp = matmul(matmul(transpose(phase_mechanical_Fi(ph)%data(1:3,1:3,en)),&
+                       phase_mechanical_Fi(ph)%data(1:3,1:3,en)),phase_mechanical_S(ph)%data(1:3,1:3,en))
+    pc = 1.0_pREAL/(1.0_pREAL - subdt*tdt_dotStateDiag(Mp,subdt,ph,en))
+  elseif (mechanical_plasticity_type(ph) == MECHANICAL_PLASTICITY_TWINTRIP) then
+    Mp = matmul(matmul(transpose(phase_mechanical_Fi(ph)%data(1:3,1:3,en)),&
+                       phase_mechanical_Fi(ph)%data(1:3,1:3,en)),phase_mechanical_S(ph)%data(1:3,1:3,en))
+    pc = 1.0_pREAL/(1.0_pREAL - subdt*twintrip_dotStateDiag(Mp,ph,en))
+  else
+    pc = 1.0_pREAL
+  end if
+
+end function plastic_statePreconditioner
 
 
 !--------------------------------------------------------------------------------------------------
@@ -359,6 +465,9 @@ module subroutine plastic_dependentState(ph,en)
 
     case (MECHANICAL_PLASTICITY_DISLOTWIN) plasticType
       call dislotwin_dependentState(ph,en)
+
+    case (MECHANICAL_PLASTICITY_TWINTRIP) plasticType
+      call twintrip_dependentState(ph,en)
 
     case (MECHANICAL_PLASTICITY_DISLOTUNGSTEN) plasticType
       call dislotungsten_dependentState(ph,en)
@@ -392,7 +501,7 @@ module function plastic_deltaState(ph, en) result(status)
   status = STATUS_OK
 
   select case (mechanical_plasticity_type(ph))
-    case (MECHANICAL_PLASTICITY_NONLOCAL,MECHANICAL_PLASTICITY_KINEHARDENING)
+    case (MECHANICAL_PLASTICITY_NONLOCAL,MECHANICAL_PLASTICITY_KINEHARDENING,MECHANICAL_PLASTICITY_TDT)
 
       Mp = matmul(matmul(transpose(phase_mechanical_Fi(ph)%data(1:3,1:3,en)),&
                          phase_mechanical_Fi(ph)%data(1:3,1:3,en)),&
@@ -405,6 +514,9 @@ module function plastic_deltaState(ph, en) result(status)
 
         case (MECHANICAL_PLASTICITY_NONLOCAL) plasticType
           call plastic_nonlocal_deltaState(Mp,ph,en)
+
+        case (MECHANICAL_PLASTICITY_TDT) plasticType
+          call tdt_deltaState(ph,en)
 
       end select plasticType
 

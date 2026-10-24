@@ -1,0 +1,90 @@
+type: twintrip
+
+# TWIP/TRIP steel: austenite slip, twinning and gamma->epsilon of Wong et al. (2016) (same parameters as
+# dislotwin_TWIP-TRIP.yaml), plus crystal plasticity inside twins and epsilon martensite.
+# Product-phase slip parameters are STARTING VALUES, not calibrated. Calibrate against Fe-22Mn-0.6C
+# stress-strain curves and twin/epsilon fractions at 123-773 K (Wong et al. 2016; Gutierrez-Urrutia &
+# Raabe 2011). Use with Hooke_TWIP-steel.yaml.
+references:
+  - S.L. Wong et al.,
+    Acta Materialia 118:140-151, 2016,
+    https://doi.org/10.1016/j.actamat.2016.07.032
+  - I. Gutierrez-Urrutia and D. Raabe,
+    Acta Materialia 59:6449-6462, 2011,
+    https://doi.org/10.1016/j.actamat.2011.07.009
+  - S.R. Kalidindi,
+    Journal of the Mechanics and Physics of Solids 46:267-290, 1998,
+    https://doi.org/10.1016/S0022-5096(97)00051-3
+
+output: [rho_mob, rho_dip, gamma_sl, Lambda_sl, tau_pass, f_tw, f_tr, f_eps, xi_sl_tw, xi_sl_eps]
+
+elastic_mixing: Reuss
+
+# austenite glide
+N_sl: [12]
+f_edge: [1.0]
+b_sl: [2.56e-10]
+Q_sl: [3.5e-19]
+p_sl: [0.325]
+q_sl: [1.55]
+B: [0.001]
+i_sl: [30.0]
+v_0: [1.4e+3]
+tau_0: [5.5e+8]
+D_a: 2.0
+Q_cl: 3.0e-19
+rho_mob_0: [5.0e+10]
+rho_dip_0: [5.0e+10]
+h_sl-sl: [0.122, 0.122, 0.625, 0.07, 0.137, 0.137, 0.122]
+
+# twinning (nucleation)
+N_tw: [12]
+b_tw: [1.47e-10]
+L_tw: 1.91e-7
+i_tw: 10.0
+t_tw: [5.0e-8]
+p_tw: [7]
+h_tw-tw: [1.0, 1.0]
+h_sl-tw: [1.0, 1.0, 1.0]
+
+# slip inside twins (austenite systems in the twin lattice; thin lamellae -> harder)
+dot_gamma_0_sl_tw: [1.0e-3]
+n_sl_tw: [20]
+xi_0_sl_tw: [4.0e+8]
+xi_inf_sl_tw: [8.0e+8]
+h_0_sl_tw: [1.0e+9]
+a_sl_tw: [2.0]
+
+# gamma->epsilon (nucleation)
+N_tr: [12]
+b_tr: [1.47e-10]
+L_tr: 2.21e-7
+i_tr: 10.0
+t_tr: [1.0e-7]
+p_tr: [4]
+V_mol: 7.09e-6
+Delta_G: 1.2055e+2
+Delta_G,T: 2.5515
+Delta_G,T^2: 1.4952e-3
+h_tr-tr: [1.0, 1.0]
+h_sl-tr: [1.5, 1.5, 1.5]
+
+# slip inside epsilon (hP, Shoji-Nishiyama): basal <a>, prismatic <a>
+c/a_eps: 1.633
+N_sl_eps: [3, 3]
+dot_gamma_0_sl_eps: [1.0e-3, 1.0e-3]
+n_sl_eps: [20, 20]
+xi_0_sl_eps: [2.0e+8, 3.0e+8]
+xi_inf_sl_eps: [4.0e+8, 6.0e+8]
+h_0_sl_eps: [1.0e+9, 1.0e+9]
+a_sl_eps: [2.0, 2.0]
+
+# twinning & transformation
+T_ref: 293.15
+Gamma_sf: 2.833e-2
+Gamma_sf,T: 1.214e-4
+Gamma_sf,T^2: 1.473e-7
+x_c: 1.0e-9
+V_cs: 1.67e-29
+
+D: 5.0e-5

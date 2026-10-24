@@ -1,0 +1,63 @@
+type: tdt
+
+# Composite twinning model: twinning, detwinning, retwinning and slip inside twins.
+# STARTING VALUES (literature-typical CRSS for AZ31), not yet calibrated. Calibrate against rolled AZ31B
+# tension/compression and tension-compression-tension cycles (e.g. Lou et al., used in the reference below).
+references:
+  - S.R. Kalidindi,
+    Journal of the Mechanics and Physics of Solids 46:267-290, 1998,
+    https://doi.org/10.1016/S0022-5096(97)00051-3
+  - J. Wang et al.,
+    International Journal of Plasticity 49:36-52, 2013,
+    https://doi.org/10.1016/j.ijplas.2013.02.016
+  - X. Sun et al.,
+    Materials 18:25, 2025 (AZ31B cyclic data and DAMASK twin/detwin model),
+    https://doi.org/10.3390/ma18010025
+
+output: [xi_sl, gamma_sl, f_tw, xi_tw, xi_dtw, xi_sl_tw, gamma_sl_tw]
+
+N_sl: [3, 3, 6, 0, 6]  # basal, prism, 1. pyr<a>, -, 2. pyr<c+a>
+N_tw: [6]              # {10-12} tension twins
+
+# slip (parent)
+dot_gamma_0_sl: [0.001, 0.001, 0.001, 0, 0.001]
+n_sl: [20, 20, 20, 1, 20]
+a_sl: [2.25, 2.25, 2.25, 1, 2.25]
+xi_0_sl:   [12.e+6,  60.e+6,  65.e+6, 0., 100.e+6]
+xi_inf_sl: [40.e+6, 135.e+6, 150.e+6, 0., 200.e+6]
+h_0_sl-sl: [0.5e+9, 0.5e+9, 0.5e+9, 0, 1.5e+9]
+h_sl-sl: [+1.0,  1.0,  1.0,  1.0,  1.0,  1.0,  1.0,  1.0,  1.0,  1.0,
+          +1.0,  1.0,  1.0,  1.0,  1.0,  1.0,  1.0,  1.0,  1.0, -1.0,
+          -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0,
+          -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0,
+          -1.0, -1.0, -1.0, -1.0, -1.0, -1.0,  1.0,  1.0,  1.0,  1.0,
+          +1.0,  1.0, -1.0, -1.0, -1.0, -1.0,  1.0,  1.0,  1.0, -1.0,
+          -1.0, -1.0, -1.0,  1.0,  1.0,  1.0,  1.0,  1.0,  1.0]
+
+# slip inside twins (per slip family; default: parent values); harder because of the thin twin lamellae
+xi_0_sl_tw:   [16.e+6,  78.e+6,  85.e+6, 0., 130.e+6]
+xi_inf_sl_tw: [50.e+6, 160.e+6, 175.e+6, 0., 230.e+6]
+
+# twinning: nucleation -> growth (tau > 0), shrinkage -> re-nucleation of the parent (tau < 0)
+dot_gamma_0_tw: [0.001]
+n_tw: [20]
+xi_0_tw:   [30.e+6]     # growth
+xi_nuc_tw: [40.e+6]     # nucleation of a twin (f -> 0)
+xi_0_dtw:  [20.e+6]     # shrinkage (detwinning, lower than growth)
+xi_retw:   [35.e+6]     # re-nucleation of the parent in a fully twinned point
+H_chi:     [20.e+6]     # twin back stress H_chi f w_0 (sigmoidal reloading)
+f_n: 0.01               # volume fraction scale of nucleation
+f_sat: 1.0
+
+# hardening
+h_0_tw-tw: [50.e+6]
+h_tw-tw: [+1.0,  1.0, -1.0, -1.0, -1.0, -1.0,  1.0, -1.0,  1.0,  1.0, -1.0,  1.0]
+h_0_tw-sl: [0.15e+9]
+h_tw-sl:  [1.0, -1.0,  1.0, -1.0,  1.0, -1.0,  1.0, -1.0,  1.0, -1.0,
+           1.0, -1.0, -1.0, -1.0, -1.0, -1.0, +1.0, -1.0,  1.0, -1.0]
+h_0_sl-tw: [0.05e+9, 0.05e+9, 0.05e+9, 0, 0.05e+9]
+h_sl-tw:  [1.0, -1.0,  1.0, -1.0,  1.0, -1.0,  1.0, -1.0,  1.0, -1.0,
+           1.0, -1.0, -1.0, -1.0, -1.0, -1.0, +1.0, -1.0,  1.0]
+h_0_dtw: [0.1e+9]       # slip inside a twin pins its boundary (raises xi_dtw)
+
+elastic_mixing: Reuss

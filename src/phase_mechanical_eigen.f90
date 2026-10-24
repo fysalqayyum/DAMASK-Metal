@@ -104,10 +104,14 @@ end function kinematics_active
 ! ToDo: MD: S is Mi?
 !--------------------------------------------------------------------------------------------------
 module subroutine phase_LiAndItsTangents(Li, dLi_dS, dLi_dFi, &
-                                         S, Fi, ph,en)
+                                         S, Fi, ph,en, Delta_t,invFi0)
 
   integer, intent(in) :: &
     ph,en
+  real(pREAL),   intent(in), optional :: &
+    Delta_t                                                                                         !< time increment (state-defined eigenstrains)
+  real(pREAL),   intent(in), optional, dimension(3,3) :: &
+    invFi0                                                                                          !< inverse of Fi at the start of the increment
   real(pREAL),   intent(in),  dimension(3,3) :: &
     S                                                                                               !< 2nd Piola-Kirchhoff stress
   real(pREAL),   intent(in),  dimension(3,3) :: &
@@ -152,6 +156,14 @@ module subroutine phase_LiAndItsTangents(Li, dLi_dS, dLi_dFi, &
       Li = Li + my_Li
       dLi_dS = dLi_dS + my_dLi_dS
       active = .true.
+    case (MECHANICAL_PLASTICITY_TWINTRIP) plasticType
+      if (present(Delta_t) .and. present(invFi0)) then
+        call twintrip_LiAndItsTangent(my_Li, my_dLi_dS, math_det33(Fi), 1.0_pREAL/math_det33(invFi0), &
+                                      Delta_t, ph,en)
+        Li = Li + my_Li
+        dLi_dS = dLi_dS + my_dLi_dS
+        active = .true.
+      end if
   end select plasticType
 
   damageType: select case (damage_type(ph))
@@ -177,5 +189,20 @@ module subroutine phase_LiAndItsTangents(Li, dLi_dS, dLi_dFi, &
 
 end subroutine phase_LiAndItsTangents
 
+
+#if defined(METAL) && defined(GRID)
+!--------------------------------------------------------------------------------------------------
+!> @brief Whether any eigenstrain (Li) mechanism is active in the given phase.
+!--------------------------------------------------------------------------------------------------
+module function eigen_active(ph) result(active)
+
+  integer, intent(in) :: ph
+  logical :: active
+
+
+  active = Nmodels(ph) > 0
+
+end function eigen_active
+#endif
 
 end submodule eigen

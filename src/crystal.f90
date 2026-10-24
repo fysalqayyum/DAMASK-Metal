@@ -407,6 +407,10 @@ module crystal
     crystal_characteristicShear_Twin, &
     crystal_C66_twin, &
     crystal_C66_trans, &
+    crystal_rotation_twin, &
+    crystal_rotation_SN, &
+    crystal_rotation_KS, &
+    crystal_C66_rotate, &
     crystal_forestProjection_edge, &
     crystal_forestProjection_screw, &
     crystal_slip_normal, &
@@ -515,6 +519,127 @@ function crystal_C66_twin(Ntwin,C66,lattice,CoverA)
   end do
 
 end function crystal_C66_twin
+
+
+!--------------------------------------------------------------------------------------------------
+!> @brief Lattice rotation of twins: 180 deg about the twin plane normal (as in crystal_C66_twin).
+!> @details Q(:,:,i) maps parent lattice vectors to twin lattice vectors, e.g. the slip systems of
+!> twin i are Q P_sl Q^T. Equivalent to 86.3 deg about <1-210> for {10-12} twins in Mg.
+!--------------------------------------------------------------------------------------------------
+function crystal_rotation_twin(Ntwin,lattice,cOverA) result(Q)
+
+  integer,     dimension(:),            intent(in) :: Ntwin                                         !< number of active twin systems per family
+  character(len=*),                     intent(in) :: lattice                                       !< Bravais lattice (Pearson symbol)
+  real(pREAL),                          intent(in) :: cOverA                                        !< c/a ratio
+  real(pREAL), dimension(3,3,sum(Ntwin))           :: Q
+
+  real(pREAL), dimension(3,3,sum(Ntwin)):: coordinateSystem
+  type(tRotation)                       :: R
+  integer                               :: i
+
+
+  select case(lattice)
+    case('cF')
+      coordinateSystem = buildCoordinateSystem(Ntwin,CF_NTWINSYSTEM,CF_SYSTEMTWIN,lattice,0.0_pREAL)
+    case('cI')
+      coordinateSystem = buildCoordinateSystem(Ntwin,CI_NTWINSYSTEM,CI_SYSTEMTWIN,lattice,0.0_pREAL)
+    case('hP')
+      coordinateSystem = buildCoordinateSystem(Ntwin,HP_NTWINSYSTEM,HP_SYSTEMTWIN,lattice,cOverA)
+    case default
+      call IO_error(130_pI16, 'invalid lattice', lattice, emph=[2])
+  end select
+
+  do i = 1, sum(Ntwin)
+    call R%fromAxisAngle([coordinateSystem(1:3,2,i),PI])
+    Q(1:3,1:3,i) = R%asMatrix()
+  end do
+
+end function crystal_rotation_twin
+
+
+!--------------------------------------------------------------------------------------------------
+!> @brief Lattice rotation of hP epsilon martensite on the four {111} planes of cF austenite
+!> (Shoji-Nishiyama: (111)cF || (0001)hP, <1-10>cF || <11-20>hP).
+!> @details Q(:,:,p) maps hP lattice vectors (DAMASK convention: a_1 || x, c || z) to cF lattice
+!> vectors, e.g. the slip systems of the martensite on plane p are Q P_hP Q^T. The in-plane <1-10>
+!> is the direction of the first slip system on the plane (any of the three gives an equivalent hP
+!> lattice due to its sixfold symmetry).
+!--------------------------------------------------------------------------------------------------
+function crystal_rotation_SN() result(Q)
+
+  real(pREAL), dimension(3,3,4) :: Q
+
+  integer :: p
+
+
+  do p = 1, 4
+    Q(1:3,1:3,p) = triad(CF_SYSTEMSLIP(4:6,3*p-2),CF_SYSTEMSLIP(1:3,3*p-2))
+  end do
+
+end function crystal_rotation_SN
+
+
+!--------------------------------------------------------------------------------------------------
+!> @brief Lattice rotation of cI alpha' martensite on the four {111} planes of cF austenite
+!> (Kurdjumov-Sachs: (111)cF || (011)cI, [-101]cF || [-1-11]cI), one variant per plane.
+!> @details Q(:,:,p) maps cI lattice vectors to cF lattice vectors. The variant is chosen such that
+!> the <1-10>cF of the first slip system on plane p is parallel to the <-1-11>cI (Burgers path via
+!> the epsilon martensite of crystal_rotation_SN on the same plane).
+!--------------------------------------------------------------------------------------------------
+function crystal_rotation_KS() result(Q)
+
+  real(pREAL), dimension(3,3,4) :: Q
+
+  integer :: p
+
+
+  do p = 1, 4
+    Q(1:3,1:3,p) = matmul(triad(CF_SYSTEMSLIP(4:6,3*p-2),CF_SYSTEMSLIP(1:3,3*p-2)), &
+                          transpose(triad([0.0_pREAL,1.0_pREAL,1.0_pREAL],[-1.0_pREAL,-1.0_pREAL,1.0_pREAL])))
+  end do
+
+end function crystal_rotation_KS
+
+
+!--------------------------------------------------------------------------------------------------
+!> @brief Stiffness matrix (6x6, Voigt) of a lattice rotated by Q: C'_ijkl = Q_ia Q_jb Q_kc Q_ld C_abcd.
+!--------------------------------------------------------------------------------------------------
+pure function crystal_C66_rotate(C66,Q) result(C66_rot)
+
+  real(pREAL), dimension(6,6), intent(in) :: C66
+  real(pREAL), dimension(3,3), intent(in) :: Q
+  real(pREAL), dimension(6,6) :: C66_rot
+
+  real(pREAL), dimension(3,3,3,3) :: C, Cr
+  integer :: i, j, k, l
+
+
+  C = math_Voigt66to3333_stiffness(C66)
+  do concurrent (i=1:3, j=1:3, k=1:3, l=1:3)
+    Cr(i,j,k,l) = sum(spread(spread(spread(Q(i,:),2,3),3,3),4,3) &
+                    * spread(spread(spread(Q(j,:),1,3),3,3),4,3) &
+                    * spread(spread(spread(Q(k,:),1,3),2,3),4,3) &
+                    * spread(spread(spread(Q(l,:),1,3),2,3),3,3) * C)
+  end do
+  C66_rot = math_3333toVoigt66_stiffness(Cr)
+
+end function crystal_C66_rotate
+
+
+!--------------------------------------------------------------------------------------------------
+!> @brief Orthonormal triad [d, n x d, n] (columns) of a plane normal n and an in-plane direction d.
+!--------------------------------------------------------------------------------------------------
+pure function triad(n,d) result(T)
+
+  real(pREAL), dimension(3), intent(in) :: n, d
+  real(pREAL), dimension(3,3) :: T
+
+
+  T(1:3,1) = d/norm2(d)
+  T(1:3,3) = n/norm2(n)
+  T(1:3,2) = math_cross(T(1:3,3),T(1:3,1))
+
+end function triad
 
 
 !--------------------------------------------------------------------------------------------------
@@ -2385,6 +2510,64 @@ subroutine crystal_selfTest()
     error stop 'characteristicShear/tension only'
   if (any(crystal_characteristicShear_Twin([1,0,1,1],'hP',sqrt(3._pREAL)*1.01_pREAL)>0._pREAL)) &   ! https://doi.org/10.1016/0079-6425(94)00007-7, Fig. 22
     error stop 'characteristicShear/compression only'
+
+
+  block
+    real(pREAL), dimension(3,3,12)      :: Q_tw, P_tw
+    real(pREAL), dimension(6,6,12)      :: C_tw
+    real(pREAL), dimension(3,3,3,3)     :: C3, C3r
+    integer :: k, i1, i2, i3, i4
+    Q_tw = crystal_rotation_twin([6,6],'hP',1.62350_pREAL)
+    P_tw = crystal_SchmidMatrix_twin([6,6],'hP',1.62350_pREAL)
+    C_tw = crystal_C66_twin([6,6],C_hP,'hP',1.62350_pREAL)
+    C3 = math_Voigt66to3333_stiffness(C_hP)
+    do k = 1, 12
+      if (any(dNeq(matmul(Q_tw(:,:,k),transpose(Q_tw(:,:,k))),math_I3,1.0e-12_pREAL))) error stop 'rotation_twin/orthogonal'
+      if (dNeq(math_det33(Q_tw(:,:,k)),1.0_pREAL,1.0e-12_pREAL))                         error stop 'rotation_twin/proper'
+      if (any(dNeq(matmul(matmul(Q_tw(:,:,k),P_tw(:,:,k)),transpose(Q_tw(:,:,k))),-P_tw(:,:,k),1.0e-12_pREAL))) &
+                                                                                          error stop 'rotation_twin/shear'
+      do concurrent (i1=1:3, i2=1:3, i3=1:3, i4=1:3)
+        C3r(i1,i2,i3,i4) = sum(spread(spread(spread(Q_tw(i1,:,k),2,3),3,3),4,3) &
+                             * spread(spread(spread(Q_tw(i2,:,k),1,3),3,3),4,3) &
+                             * spread(spread(spread(Q_tw(i3,:,k),1,3),2,3),4,3) &
+                             * spread(spread(spread(Q_tw(i4,:,k),1,3),2,3),3,3) * C3)
+      end do
+      if (any(dNeq(math_3333toVoigt66_stiffness(C3r),C_tw(:,:,k),1.0e-10_pREAL*maxval(abs(C_hP))))) &
+                                                                                          error stop 'rotation_twin/C66'
+    end do
+  end block
+
+  block
+    real(pREAL), dimension(3,3,4)  :: Q_SN, Q_KS
+    real(pREAL), dimension(3,3,12) :: Q_tw
+    real(pREAL), dimension(6,6,12) :: C_tw
+    real(pREAL), dimension(3)      :: n, a
+    integer :: p
+    Q_SN = crystal_rotation_SN()
+    Q_KS = crystal_rotation_KS()
+    do p = 1, 4
+      n = CF_SYSTEMSLIP(4:6,3*p-2)/norm2(CF_SYSTEMSLIP(4:6,3*p-2))
+      if (any(dNeq(matmul(Q_SN(:,:,p),transpose(Q_SN(:,:,p))),math_I3,1.0e-12_pREAL))) error stop 'rotation_SN/orthogonal'
+      if (dNeq(math_det33(Q_SN(:,:,p)),1.0_pREAL,1.0e-12_pREAL))                         error stop 'rotation_SN/proper'
+      if (any(dNeq(matmul(Q_SN(:,:,p),[0.0_pREAL,0.0_pREAL,1.0_pREAL]),n,1.0e-12_pREAL)))  error stop 'rotation_SN/c'
+      a = matmul(Q_SN(:,:,p),[1.0_pREAL,0.0_pREAL,0.0_pREAL])                               ! a_1 = [2-1-10] || <1-10>
+      if (dNeq(abs(dot_product(a,CF_SYSTEMSLIP(1:3,3*p-2)))/norm2(CF_SYSTEMSLIP(1:3,3*p-2)),1.0_pREAL,1.0e-12_pREAL)) &
+                                                                                         error stop 'rotation_SN/a'
+      if (any(dNeq(matmul(Q_KS(:,:,p),transpose(Q_KS(:,:,p))),math_I3,1.0e-12_pREAL))) error stop 'rotation_KS/orthogonal'
+      if (dNeq(math_det33(Q_KS(:,:,p)),1.0_pREAL,1.0e-12_pREAL))                         error stop 'rotation_KS/proper'
+      if (any(dNeq(matmul(Q_KS(:,:,p),[0.0_pREAL,1.0_pREAL,1.0_pREAL]/sqrt(2.0_pREAL)),n,1.0e-12_pREAL))) &
+                                                                                         error stop 'rotation_KS/plane'
+      if (dNeq(abs(dot_product(matmul(Q_KS(:,:,p),[-1.0_pREAL,-1.0_pREAL,1.0_pREAL]/sqrt(3.0_pREAL)), &
+                               CF_SYSTEMSLIP(1:3,3*p-2)))/norm2(CF_SYSTEMSLIP(1:3,3*p-2)),1.0_pREAL,1.0e-12_pREAL)) &
+                                                                                         error stop 'rotation_KS/direction'
+    end do
+    Q_tw = crystal_rotation_twin([12],'cF',0.0_pREAL)
+    C_tw = crystal_C66_twin([12],C_cF,'cF',0.0_pREAL)
+    do p = 1, 12
+      if (any(dNeq(crystal_C66_rotate(C_cF,Q_tw(:,:,p)),C_tw(:,:,p),1.0e-10_pREAL*maxval(abs(C_cF))))) &
+                                                                                         error stop 'C66_rotate'
+    end do
+  end block
 
 end subroutine crystal_selfTest
 
