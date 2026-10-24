@@ -1,5 +1,7 @@
 # DAMASK-Metal
 
+[![build](https://github.com/fysalqayyum/DAMASK-Metal/actions/workflows/build.yml/badge.svg?branch=metal)](https://github.com/fysalqayyum/DAMASK-Metal/actions/workflows/build.yml)
+
 **DAMASK 3.1.0 with an Apple-GPU (Metal) backend for the spectral grid solver.**
 
 DAMASK-Metal runs the constitutive update (stress and state integration, and the tangent) and the
