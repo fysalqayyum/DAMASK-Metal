@@ -256,6 +256,7 @@ struct cp_model_tdt {
       dX[iXD+k] = O::ld(p.h0_dtw[k]) * gr[k];
       for (int f = 0; f < p.N_fam; ++f) {
         H y = O::c(1.0f) - X[iXR+NFAM*k+f] / O::ld(p.xi_inf_tw[f]);
+        if (O::f(y) < 0.0f) y = O::c(0.0f);                                                           // no softening past saturation (as tdt.f90)
         dX[iXR+NFAM*k+f] = O::ld(p.h0_tw[f]) * cp_spow<H>(y, O::ld(p.a_tw[f])) * gr[k];
         if (Jd) Jd[iXR+NFAM*k+f] = slope(cp_ldJ<float>(p.h0_tw[f]), O::f(y), cp_ldJ<float>(p.a_tw[f]), cp_ldJ<float>(p.xi_inf_tw[f]),
                                          O::f(gr[k]), O::f(X[iXR+NFAM*k+f]), grn[NFAM*k+f]);

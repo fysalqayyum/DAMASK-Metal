@@ -318,7 +318,7 @@ module function tdt_dotState(Mp,Delta_t,ph,en) result(dotState)
     o = o + 3*nt
     do k = 1, nt
       do f = 1, nf
-        y = 1.0_pREAL - stt%xi_sl_tw(nf*(k-1)+f,en)/prm%xi_inf_sl_tw(f)
+        y = max(1.0_pREAL - stt%xi_sl_tw(nf*(k-1)+f,en)/prm%xi_inf_sl_tw(f),0.0_pREAL)                ! no softening past saturation: thin-twin overshoot cannot run away
         dotState(o+nf*(k-1)+f) = prm%h_0_sl_tw_f(f) * sign(abs(y)**prm%a_sl_tw(f),y) * gr(k)
       end do
     end do
@@ -358,7 +358,7 @@ module function tdt_dotStateDiag(Mp,Delta_t,ph,en) result(Jd)
     o = 2*ns + 3*nt
     do k = 1, nt
       do f = 1, nf
-        Jd(o+nf*(k-1)+f) = slope(prm%h_0_sl_tw_f(f),1.0_pREAL-stt%xi_sl_tw(nf*(k-1)+f,en)/prm%xi_inf_sl_tw(f), &
+        Jd(o+nf*(k-1)+f) = slope(prm%h_0_sl_tw_f(f),max(1.0_pREAL-stt%xi_sl_tw(nf*(k-1)+f,en)/prm%xi_inf_sl_tw(f),0.0_pREAL), &
                                  prm%a_sl_tw(f),prm%xi_inf_sl_tw(f),gr(k),stt%xi_sl_tw(nf*(k-1)+f,en),grn(f,k))
       end do
     end do
