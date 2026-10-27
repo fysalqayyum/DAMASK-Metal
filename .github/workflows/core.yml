@@ -212,7 +212,9 @@ jobs:
 
       - name: DAMASK - Compile
         run: |
-          cmake -B build -DGRID=ON -DMESH=ON -DCMAKE_INSTALL_PREFIX=${PWD} -DBUILDCMD_POST="--include-directory-after=$(gfortran -print-file-name=include)"
+          # no gcc include dir on clang's path: CMakeLists.txt copies ISO_Fortran_binding.h alone, and gcc's
+          # stdatomic.h would shadow clang's (breaks libfyaml >= 0.9.6 atomics)
+          cmake -B build -DGRID=ON -DMESH=ON -DCMAKE_INSTALL_PREFIX=${PWD}
           cmake --build build --parallel
           cmake --install build
 
