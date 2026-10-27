@@ -2,6 +2,12 @@
 
 Versions are named `<DAMASK version>-metal.<n>`.
 
+## Unreleased
+
+### Added
+- `tdt`: optional parent slip hardening by the total twin fraction, with the keys and law of
+  `phenopowerlaw` (`c_1`, `c_2`, `f_sat_sl-tw`; defaults off), on the CPU and the GPU.
+
 ## 3.1.0-metal.1: first public version
 
 Based on DAMASK 3.1.0.

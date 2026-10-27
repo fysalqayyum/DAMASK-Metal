@@ -6,7 +6,9 @@
 !> plane normal). All regions see the same Mandel stress (iso-stress, Kalidindi 1998):
 !>   Lp = w_0 sum_i gd_i P_i + sum_k f_k sum_i gd_i^(k) Q_k P_i Q_k^T + sum_k gamma_k fd_k P_tw,k
 !> slip: phenomenological power law, own resistances in the parent (per system) and in each twin
-!> (per slip family, Voce). Twin volume fractions evolve in both directions (TDT, Wang et al. 2013):
+!> (per slip family, Voce). Parent slip hardening depends on the total twin fraction F = sum(f) as in
+!> phenopowerlaw: rate x (1 + c_1 F^c_2), saturation xi_inf_sl + f_sat_sl-tw sqrt(F) (default: off).
+!> Twin volume fractions evolve in both directions (TDT, Wang et al. 2013):
 !>   fd_k = gd_0/gamma_k * [ (1 - sum(f)/f_sat) <tau_k/xi+_k>^n - f_k <-tau_k/xi-_k>^n ]
 !>   xi+ = xi_tw + (xi_nuc - xi_0_tw) exp(-f_k/f_n)        nucleation -> growth
 !>   xi- = xi_dtw + (xi_retw - xi_0_dtw) exp(-w_0/f_n)     shrinkage -> parent re-nucleation
@@ -25,7 +27,7 @@ submodule(phase:plastic) tdt
 
   type :: tParameters
     real(pREAL), allocatable, dimension(:) :: &
-      dot_gamma_0_sl, n_sl, a_sl, h_0_sl_sl, xi_inf_sl, h_0_sl_tw, &                               !< per slip system
+      dot_gamma_0_sl, n_sl, a_sl, h_0_sl_sl, xi_inf_sl, h_0_sl_tw, c_1, c_2, f_sat_sl_tw, &        !< per slip system
       xi_0_sl_tw, xi_inf_sl_tw, h_0_sl_tw_f, a_sl_tw, &                                             !< per slip family: slip inside twins
       dot_gamma_0_tw, n_tw, gamma_char, dxi_nuc, dxi_retw, H_chi, h_0_tw_tw, h_0_tw_sl, h_0_dtw     !< per twin system
     real(pREAL), allocatable, dimension(:,:) :: &
@@ -132,6 +134,12 @@ module function plastic_tdt_init() result(myPlasticity)
     prm%h_0_sl_sl      = math_expand(pl%get_as1dReal('h_0_sl-sl',     requiredSize=size(N_sl)), N_sl)
     xi_0_sl            = math_expand(pl%get_as1dReal('xi_0_sl',       requiredSize=size(N_sl)), N_sl)
     prm%xi_inf_sl      = math_expand(pl%get_as1dReal('xi_inf_sl',     requiredSize=size(N_sl)), N_sl)
+    prm%c_1            = math_expand(pl%get_as1dReal('c_1',           requiredSize=size(N_sl), &
+                                                     defaultVal=misc_zeros(size(N_sl))), N_sl)
+    prm%c_2            = math_expand(pl%get_as1dReal('c_2',           requiredSize=size(N_sl), &
+                                                     defaultVal=misc_ones(size(N_sl))), N_sl)
+    prm%f_sat_sl_tw    = math_expand(pl%get_as1dReal('f_sat_sl-tw',   requiredSize=size(N_sl), &
+                                                     defaultVal=misc_zeros(size(N_sl))), N_sl)
 
     prm%N_fam = count(N_sl > 0)                                                                     ! families with active systems
     allocate(prm%fam(prm%sum_N_sl))
@@ -154,6 +162,9 @@ module function plastic_tdt_init() result(myPlasticity)
     if (any(prm%a_sl           <= 0.0_pREAL)) extmsg = trim(extmsg)//' a_sl'
     if (any(xi_0_sl            <= 0.0_pREAL)) extmsg = trim(extmsg)//' xi_0_sl'
     if (any(prm%xi_inf_sl      <= 0.0_pREAL)) extmsg = trim(extmsg)//' xi_inf_sl'
+    if (any(prm%c_1            <  0.0_pREAL)) extmsg = trim(extmsg)//' c_1'
+    if (any(prm%c_2            <= 0.0_pREAL)) extmsg = trim(extmsg)//' c_2'
+    if (any(prm%f_sat_sl_tw    <  0.0_pREAL)) extmsg = trim(extmsg)//' f_sat_sl-tw'
     if (any(prm%xi_0_sl_tw     <= 0.0_pREAL)) extmsg = trim(extmsg)//' xi_0_sl_tw'
     if (any(prm%xi_inf_sl_tw   <= 0.0_pREAL)) extmsg = trim(extmsg)//' xi_inf_sl_tw'
 
@@ -297,7 +308,7 @@ module function tdt_dotState(Mp,Delta_t,ph,en) result(dotState)
 
   real(pREAL), dimension(param(ph)%sum_N_sl) :: gd, x
   real(pREAL), dimension(param(ph)%sum_N_tw) :: gr, fd
-  real(pREAL) :: y
+  real(pREAL) :: y, sumF
   integer :: ns, nt, nf, k, f, o
 
 
@@ -306,8 +317,10 @@ module function tdt_dotState(Mp,Delta_t,ph,en) result(dotState)
     ns = prm%sum_N_sl; nt = prm%sum_N_tw; nf = prm%N_fam
     call kinetics(Mp,Delta_t,ph,en,gd,gr,fd)
 
-    x = 1.0_pREAL - stt%xi_sl(:,en)/prm%xi_inf_sl
-    dotState(1:ns)                 = prm%h_0_sl_sl * sign(abs(x)**prm%a_sl,x) * matmul(prm%h_sl_sl,abs(gd)) &
+    sumF = max(sum(stt%f_tw(:,en)),0.0_pREAL)
+    x = 1.0_pREAL - stt%xi_sl(:,en)/(prm%xi_inf_sl + prm%f_sat_sl_tw*sqrt(sumF))
+    dotState(1:ns)                 = prm%h_0_sl_sl * (1.0_pREAL + prm%c_1*sumF**prm%c_2) &
+                                   * sign(abs(x)**prm%a_sl,x) * matmul(prm%h_sl_sl,abs(gd)) &
                                    + prm%h_0_sl_tw * matmul(prm%h_sl_tw,prm%gamma_char*abs(fd))
     dotState(ns+1:2*ns)            = abs(gd)
     o = 2*ns
@@ -344,6 +357,7 @@ module function tdt_dotStateDiag(Mp,Delta_t,ph,en) result(Jd)
   real(pREAL), dimension(param(ph)%sum_N_sl) :: gd
   real(pREAL), dimension(param(ph)%sum_N_tw) :: gr, fd
   real(pREAL), dimension(param(ph)%N_fam,param(ph)%sum_N_tw) :: grn
+  real(pREAL) :: sumF, h0, xi_inf
   integer :: ns, nt, nf, i, k, f, o
 
 
@@ -351,8 +365,11 @@ module function tdt_dotStateDiag(Mp,Delta_t,ph,en) result(Jd)
     ns = prm%sum_N_sl; nt = prm%sum_N_tw; nf = prm%N_fam
     call kinetics(Mp,Delta_t,ph,en,gd,gr,fd,grn=grn)
     Jd = 0.0_pREAL
+    sumF = max(sum(stt%f_tw(:,en)),0.0_pREAL)                                                       ! twin fraction: held fixed (state, not differentiated)
     do i = 1, ns
-      Jd(i) = slope(prm%h_0_sl_sl(i),1.0_pREAL-stt%xi_sl(i,en)/prm%xi_inf_sl(i),prm%a_sl(i),prm%xi_inf_sl(i), &
+      h0     = prm%h_0_sl_sl(i)*(1.0_pREAL + prm%c_1(i)*sumF**prm%c_2(i))
+      xi_inf = prm%xi_inf_sl(i) + prm%f_sat_sl_tw(i)*sqrt(sumF)
+      Jd(i) = slope(h0,1.0_pREAL-stt%xi_sl(i,en)/xi_inf,prm%a_sl(i),xi_inf, &
                     dot_product(prm%h_sl_sl(i,:),abs(gd)),stt%xi_sl(i,en),prm%h_sl_sl(i,i)*prm%n_sl(i)*abs(gd(i)))
     end do
     o = 2*ns + 3*nt
@@ -667,7 +684,7 @@ module function plastic_tdt_GPUadd(ph,C66,numerics) result(handle)
               reshape(spread(prm%h_0_tw_sl,2,prm%sum_N_sl)*prm%h_tw_sl,[prm%sum_N_tw*prm%sum_N_sl]), &
               reshape(spread(prm%h_0_tw_tw,2,prm%sum_N_tw)*prm%h_tw_tw*spread(prm%gamma_char,1,prm%sum_N_tw), &
                       [prm%sum_N_tw**2]), &
-              prm%f_n, prm%f_sat, F_MIN]
+              prm%f_n, prm%f_sat, F_MIN, prm%c_1, prm%c_2, prm%f_sat_sl_tw]
       o = 2*prm%sum_N_sl
       handle = Metal_cpAddPhaseTdt(Metal_ctx, &
                                    int([prm%sum_N_sl,prm%sum_N_tw,prm%N_fam,merge(1,0,prm%Reuss)],C_INT), &

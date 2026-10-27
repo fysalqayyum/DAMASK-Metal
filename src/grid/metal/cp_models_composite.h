@@ -72,6 +72,7 @@ struct cp_tdt_param {
   cp_pair g0_tw[CP_TDT_MAX_TW], n_tw[CP_TDT_MAX_TW], gch[CP_TDT_MAX_TW], dxi_nuc[CP_TDT_MAX_TW];
   cp_pair dxi_retw[CP_TDT_MAX_TW], H_chi[CP_TDT_MAX_TW], h0_dtw[CP_TDT_MAX_TW];
   cp_pair f_n, f_sat, f_min;
+  cp_pair c1[CP_TDT_MAX_SL], c2[CP_TDT_MAX_SL], fsat_st[CP_TDT_MAX_SL];                              // parent slip: rate x (1 + c_1 F^c_2), xi_inf + f_sat_sl-tw sqrt(F)
   int     fam[CP_TDT_MAX_SL];                                                                       // slip family (0-based)
   float   atol_xi, atol_gamma, atol_f;
   int     N_sl, N_tw, N_fam, reuss;
@@ -237,13 +238,19 @@ struct cp_model_tdt {
     if (Jd) for (int j = 0; j < ND; ++j) Jd[j] = 0.0f;
     for (int j = 0; j < ND; ++j) dX[j] = O::c(0.0f);
     const int ns = p.N_sl, nt = p.N_tw;
+    H sumf = O::c(0.0f);
+    for (int k = 0; k < nt; ++k) sumf = sumf + X[iF+k];
+    if (O::f(sumf) < 0.0f) sumf = O::c(0.0f);
+    const H sqf = O::sq(sumf);
     for (int i = 0; i < ns; ++i) {
       H hs = O::c(0.0f), ht = O::c(0.0f);
       for (int j = 0; j < ns; ++j) hs = hs + O::ld(p.h_ss[i+NSL*j]) * O::ab(gd[j]);
       for (int k = 0; k < nt; ++k) ht = ht + O::ld(p.h_st[i+NSL*k]) * O::ab(fd[k]);
-      H x = O::c(1.0f) - X[iXI+i] / O::ld(p.xi_inf[i]);
-      dX[iXI+i] = O::ld(p.h0[i]) * cp_spow<H>(x, O::ld(p.a[i])) * hs + ht;
-      if (Jd) Jd[iXI+i] = slope(cp_ldJ<float>(p.h0[i]), O::f(x), cp_ldJ<float>(p.a[i]), cp_ldJ<float>(p.xi_inf[i]), O::f(hs),
+      const H h0 = O::ld(p.h0[i]) * (O::c(1.0f) + O::ld(p.c1[i]) * cp_powp<H>(sumf, O::ld(p.c2[i])));
+      const H xi_inf = O::ld(p.xi_inf[i]) + O::ld(p.fsat_st[i]) * sqf;
+      H x = O::c(1.0f) - X[iXI+i] / xi_inf;
+      dX[iXI+i] = h0 * cp_spow<H>(x, O::ld(p.a[i])) * hs + ht;
+      if (Jd) Jd[iXI+i] = slope(O::f(h0), O::f(x), cp_ldJ<float>(p.a[i]), O::f(xi_inf), O::f(hs),
                                 O::f(X[iXI+i]), cp_ldJ<float>(p.h_ss[i+NSL*i]) * cp_ldJ<float>(p.n[i]) * O::f(O::ab(gd[i])));
       dX[iG+i]  = O::ab(gd[i]);
     }
@@ -770,6 +777,7 @@ inline int cp_tdt_pack(const int* dims, const double* C66, const double* blob, c
   b += nt*nt;
   q->f_n = cp_to_pair(b[0]); q->f_sat = cp_to_pair(b[1]); q->f_min = cp_to_pair(b[2]);
   b += 3;
+  vec(q->c1, ns, NSL, 0.0); vec(q->c2, ns, NSL, 1.0); vec(q->fsat_st, ns, NSL, 0.0);
   for (int k = 0; k < 36; ++k) q->C66[k] = cp_to_pair(C66[k]);
   q->atol_xi = float(atols[0]); q->atol_gamma = float(atols[1]); q->atol_f = float(atols[2]);
   q->N_sl = ns; q->N_tw = nt; q->N_fam = nf; q->reuss = dims[3];

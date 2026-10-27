@@ -74,7 +74,8 @@ int C_Metal_cp_add_phase_model(void* ctx, int model, int N_sl, const double* C66
 //> composite twinning model tdt (phase_mechanical_plastic_tdt.f90, cp_model_tdt in cp_models_composite.h):
 //> dims = [N_slip, N_twin, N_slip_families, Reuss(1)/Voigt(0)], C66 = parent stiffness, blob as assembled
 //> by plastic_tdt_GPUadd (Schmid tensors of parent and twins, compliances/stiffnesses, per-system and
-//> per-family parameters, scaled interaction matrices, f_n, f_sat, f_min; n_blob values, which must be
+//> per-family parameters, scaled interaction matrices, f_n, f_sat, f_min, c_1, c_2, f_sat_sl-tw (per slip
+//> system); n_blob values, which must be
 //> exactly what dims imply, else < 0), atols = [xi, gamma, f].
 //> Up to 36 slip systems, 12 twin systems, 6 slip families. state0/state hold DAMASK's state followed by
 //> the homogenized C66 (36).
