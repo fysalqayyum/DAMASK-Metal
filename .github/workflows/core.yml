@@ -202,7 +202,9 @@ jobs:
 
       - name: PETSc - Installation
         run: |
-          ln -s /opt/homebrew/bin/gfortran-15 /opt/homebrew/bin/gfortran
+          # newer runner images already provide gfortran; otherwise link the newest versioned one
+          [ -e /opt/homebrew/bin/gfortran ] || ln -s "$(ls /opt/homebrew/bin/gfortran-[0-9]* | sort -V | tail -1)" /opt/homebrew/bin/gfortran
+          gfortran --version | head -1
           cd petsc-${PETSC_VERSION}
           ./configure --with-fc=mpifort --with-cc=mpicc --with-cxx=mpic++ \
           --download-fftw --download-hdf5 --with-hdf5-fortran-bindings=1 --download-zlib --download-boost
