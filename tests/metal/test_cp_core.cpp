@@ -831,6 +831,7 @@ int main() {
     app(hss); app(hst); app(hts); app(htt);
     app({0.01, 1.0, 1e-12});
     app(std::vector<double>(ns, 0.5)); app(std::vector<double>(ns, 1.5)); app(std::vector<double>(ns, 20e6)); // c_1, c_2, f_sat_sl-tw
+    app(std::vector<double>(ns, 8e6)); app(std::vector<double>(1, 0.02));                           // xi_pin_sl, gamma_pin (pinning exercised)
     const int dims[4] = {ns, nt, nf, 1};
     const double atols[3] = {1.0, 1e-6, 1e-6};
     typedef cp_model_tdt<18,6,6> Mo; typedef cp_layout<Mo> L;

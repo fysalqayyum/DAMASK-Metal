@@ -73,6 +73,7 @@ struct cp_tdt_param {
   cp_pair dxi_retw[CP_TDT_MAX_TW], H_chi[CP_TDT_MAX_TW], h0_dtw[CP_TDT_MAX_TW];
   cp_pair f_n, f_sat, f_min;
   cp_pair c1[CP_TDT_MAX_SL], c2[CP_TDT_MAX_SL], fsat_st[CP_TDT_MAX_SL];                              // parent slip: rate x (1 + c_1 F^c_2), xi_inf + f_sat_sl-tw sqrt(F)
+  cp_pair pin[CP_TDT_MAX_SL], gamma_pin;                                                            // parent flow rule: xi + xi_pin exp(-gamma/gamma_pin)
   int     fam[CP_TDT_MAX_SL];                                                                       // slip family (0-based)
   float   atol_xi, atol_gamma, atol_f;
   int     N_sl, N_tw, N_fam, reuss;
@@ -132,7 +133,8 @@ struct cp_model_tdt {
       for (int i = 0; i < p.N_sl; ++i) {
         CP_CONSTANT cp_pair* P9 = p.P9 + 9*(NSL*r+i);
         H tau = resolved<H>(p.Pv + 6*(NSL*r+i), S);
-        H xi  = r == 0 ? X[iXI+i] : X[iXR + NFAM*(r-1) + p.fam[i]];
+        H xi  = r == 0 ? X[iXI+i] + O::ld(p.pin[i]) * O::ex(-(X[iG+i] / O::ld(p.gamma_pin)))           // pinning (0 when off)
+                       : X[iXR + NFAM*(r-1) + p.fam[i]];
         H g   = O::ld(p.g0[i]) * cp_powp<H>(O::ab(tau) / xi, O::ld(p.n[i]));
         if (O::f(tau) < 0.0f) g = -g;
         if (r == 0) gd[i] = g;
@@ -251,7 +253,7 @@ struct cp_model_tdt {
       H x = O::c(1.0f) - X[iXI+i] / xi_inf;
       dX[iXI+i] = h0 * cp_spow<H>(x, O::ld(p.a[i])) * hs + ht;
       if (Jd) Jd[iXI+i] = slope(O::f(h0), O::f(x), cp_ldJ<float>(p.a[i]), O::f(xi_inf), O::f(hs),
-                                O::f(X[iXI+i]), cp_ldJ<float>(p.h_ss[i+NSL*i]) * cp_ldJ<float>(p.n[i]) * O::f(O::ab(gd[i])));
+                                O::f(X[iXI+i] + O::ld(p.pin[i]) * O::ex(-(X[iG+i] / O::ld(p.gamma_pin)))), cp_ldJ<float>(p.h_ss[i+NSL*i]) * cp_ldJ<float>(p.n[i]) * O::f(O::ab(gd[i])));
       dX[iG+i]  = O::ab(gd[i]);
     }
     for (int k = 0; k < nt; ++k) {
@@ -778,6 +780,7 @@ inline int cp_tdt_pack(const int* dims, const double* C66, const double* blob, c
   q->f_n = cp_to_pair(b[0]); q->f_sat = cp_to_pair(b[1]); q->f_min = cp_to_pair(b[2]);
   b += 3;
   vec(q->c1, ns, NSL, 0.0); vec(q->c2, ns, NSL, 1.0); vec(q->fsat_st, ns, NSL, 0.0);
+  vec(q->pin, ns, NSL, 0.0); q->gamma_pin = cp_to_pair(b[0]); b += 1;                                // pinning
   for (int k = 0; k < 36; ++k) q->C66[k] = cp_to_pair(C66[k]);
   q->atol_xi = float(atols[0]); q->atol_gamma = float(atols[1]); q->atol_f = float(atols[2]);
   q->N_sl = ns; q->N_tw = nt; q->N_fam = nf; q->reuss = dims[3];

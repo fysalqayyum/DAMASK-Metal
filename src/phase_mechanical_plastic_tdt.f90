@@ -8,6 +8,10 @@
 !> slip: phenomenological power law, own resistances in the parent (per system) and in each twin
 !> (per slip family, Voce). Parent slip hardening depends on the total twin fraction F = sum(f) as in
 !> phenopowerlaw: rate x (1 + c_1 F^c_2), saturation xi_inf_sl + f_sat_sl-tw sqrt(F) (default: off).
+!> Optional solute pinning of parent slip (default: off): the flow rule uses the effective resistance
+!>   xi_eff_i = xi_i + xi_pin_i exp(-gamma_i/gamma_pin)   (gamma_i = accumulated |shear| of system i),
+!> an excess that delays the onset of slip and is released by the system's own slip (yield point);
+!> the hardening law acts on xi_i unchanged.
 !> Twin volume fractions evolve in both directions (TDT, Wang et al. 2013):
 !>   fd_k = gd_0/gamma_k * [ (1 - sum(f)/f_sat) <tau_k/xi+_k>^n - f_k <-tau_k/xi-_k>^n ]
 !>   xi+ = xi_tw + (xi_nuc - xi_0_tw) exp(-f_k/f_n)        nucleation -> growth
@@ -27,7 +31,7 @@ submodule(phase:plastic) tdt
 
   type :: tParameters
     real(pREAL), allocatable, dimension(:) :: &
-      dot_gamma_0_sl, n_sl, a_sl, h_0_sl_sl, xi_inf_sl, h_0_sl_tw, c_1, c_2, f_sat_sl_tw, &        !< per slip system
+      dot_gamma_0_sl, n_sl, a_sl, h_0_sl_sl, xi_inf_sl, h_0_sl_tw, c_1, c_2, f_sat_sl_tw, xi_pin_sl, & !< per slip system
       xi_0_sl_tw, xi_inf_sl_tw, h_0_sl_tw_f, a_sl_tw, &                                             !< per slip family: slip inside twins
       dot_gamma_0_tw, n_tw, gamma_char, dxi_nuc, dxi_retw, H_chi, h_0_tw_tw, h_0_tw_sl, h_0_dtw     !< per twin system
     real(pREAL), allocatable, dimension(:,:) :: &
@@ -37,7 +41,7 @@ submodule(phase:plastic) tdt
     real(pREAL), allocatable, dimension(:,:,:,:) :: &
       P_sl_tw                                                                                       !< (3,3,N_sl,N_tw): Q_k P_i Q_k^T
     real(pREAL) :: &
-      f_n, f_sat
+      f_n, f_sat, gamma_pin
     integer :: &
       sum_N_sl, sum_N_tw, N_fam
     integer, allocatable, dimension(:) :: &
@@ -140,6 +144,9 @@ module function plastic_tdt_init() result(myPlasticity)
                                                      defaultVal=misc_ones(size(N_sl))), N_sl)
     prm%f_sat_sl_tw    = math_expand(pl%get_as1dReal('f_sat_sl-tw',   requiredSize=size(N_sl), &
                                                      defaultVal=misc_zeros(size(N_sl))), N_sl)
+    prm%xi_pin_sl      = math_expand(pl%get_as1dReal('xi_pin_sl',     requiredSize=size(N_sl), &
+                                                     defaultVal=misc_zeros(size(N_sl))), N_sl)
+    prm%gamma_pin      = pl%get_asReal('gamma_pin', defaultVal=1.0_pREAL)
 
     prm%N_fam = count(N_sl > 0)                                                                     ! families with active systems
     allocate(prm%fam(prm%sum_N_sl))
@@ -163,6 +170,8 @@ module function plastic_tdt_init() result(myPlasticity)
     if (any(xi_0_sl            <= 0.0_pREAL)) extmsg = trim(extmsg)//' xi_0_sl'
     if (any(prm%xi_inf_sl      <= 0.0_pREAL)) extmsg = trim(extmsg)//' xi_inf_sl'
     if (any(prm%c_1            <  0.0_pREAL)) extmsg = trim(extmsg)//' c_1'
+    if (any(prm%xi_pin_sl      <  0.0_pREAL)) extmsg = trim(extmsg)//' xi_pin_sl'
+    if (prm%gamma_pin          <= 0.0_pREAL)  extmsg = trim(extmsg)//' gamma_pin'
     if (any(prm%c_2            <= 0.0_pREAL)) extmsg = trim(extmsg)//' c_2'
     if (any(prm%f_sat_sl_tw    <  0.0_pREAL)) extmsg = trim(extmsg)//' f_sat_sl-tw'
     if (any(prm%xi_0_sl_tw     <= 0.0_pREAL)) extmsg = trim(extmsg)//' xi_0_sl_tw'
@@ -370,7 +379,9 @@ module function tdt_dotStateDiag(Mp,Delta_t,ph,en) result(Jd)
       h0     = prm%h_0_sl_sl(i)*(1.0_pREAL + prm%c_1(i)*sumF**prm%c_2(i))
       xi_inf = prm%xi_inf_sl(i) + prm%f_sat_sl_tw(i)*sqrt(sumF)
       Jd(i) = slope(h0,1.0_pREAL-stt%xi_sl(i,en)/xi_inf,prm%a_sl(i),xi_inf, &
-                    dot_product(prm%h_sl_sl(i,:),abs(gd)),stt%xi_sl(i,en),prm%h_sl_sl(i,i)*prm%n_sl(i)*abs(gd(i)))
+                    dot_product(prm%h_sl_sl(i,:),abs(gd)), &
+                    stt%xi_sl(i,en) + prm%xi_pin_sl(i)*exp(-stt%gamma_sl(i,en)/prm%gamma_pin), &   ! flow-rule resistance
+                    prm%h_sl_sl(i,i)*prm%n_sl(i)*abs(gd(i)))
     end do
     o = 2*ns + 3*nt
     do k = 1, nt
@@ -517,6 +528,7 @@ pure subroutine kinetics(Mp,Delta_t,ph,en,gd,gr,fd,Lp,dLp_dMp,grn)
 
   real(pREAL) :: w0, w00, tau, g, dg, xi, c, f0, q, A, F_e, R, den, sh, lmax
   real(pREAL), dimension(param(ph)%sum_N_tw) :: tau_tw, lr, al, ga
+  real(pREAL), dimension(param(ph)%sum_N_sl) :: xi_eff                                            !< flow-rule resistance (pinning)
   real(pREAL), dimension(3,3) :: u, v
   integer :: i, k, nf, kk, l, m, n
   logical :: deriv, grow, any_grow
@@ -535,9 +547,10 @@ pure subroutine kinetics(Mp,Delta_t,ph,en,gd,gr,fd,Lp,dLp_dMp,grn)
     if (present(grn)) grn = 0.0_pREAL
 
     ! parent
+    xi_eff = stt%xi_sl(:,en) + prm%xi_pin_sl*exp(-stt%gamma_sl(:,en)/prm%gamma_pin)
     do i = 1, prm%sum_N_sl
       tau = math_tensordot(Mp,prm%P_sl(1:3,1:3,i))
-      gd(i) = sign(prm%dot_gamma_0_sl(i) * (abs(tau)/stt%xi_sl(i,en))**prm%n_sl(i), tau)
+      gd(i) = sign(prm%dot_gamma_0_sl(i) * (abs(tau)/xi_eff(i))**prm%n_sl(i), tau)
       if (deriv .and. dNeq0(gd(i))) then
         Lp = Lp + w0*gd(i)*prm%P_sl(1:3,1:3,i)
         dg = w0*gd(i)*prm%n_sl(i)/tau
@@ -684,7 +697,7 @@ module function plastic_tdt_GPUadd(ph,C66,numerics) result(handle)
               reshape(spread(prm%h_0_tw_sl,2,prm%sum_N_sl)*prm%h_tw_sl,[prm%sum_N_tw*prm%sum_N_sl]), &
               reshape(spread(prm%h_0_tw_tw,2,prm%sum_N_tw)*prm%h_tw_tw*spread(prm%gamma_char,1,prm%sum_N_tw), &
                       [prm%sum_N_tw**2]), &
-              prm%f_n, prm%f_sat, F_MIN, prm%c_1, prm%c_2, prm%f_sat_sl_tw]
+              prm%f_n, prm%f_sat, F_MIN, prm%c_1, prm%c_2, prm%f_sat_sl_tw, prm%xi_pin_sl, prm%gamma_pin]
       o = 2*prm%sum_N_sl
       handle = Metal_cpAddPhaseTdt(Metal_ctx, &
                                    int([prm%sum_N_sl,prm%sum_N_tw,prm%N_fam,merge(1,0,prm%Reuss)],C_INT), &
