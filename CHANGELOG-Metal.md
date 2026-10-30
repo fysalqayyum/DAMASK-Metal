@@ -7,6 +7,13 @@ Versions are named `<DAMASK version>-metal.<n>`.
 ### Added
 - `tdt`: optional parent slip hardening by the total twin fraction, with the keys and law of
   `phenopowerlaw` (`c_1`, `c_2`, `f_sat_sl-tw`; defaults off), on the CPU and the GPU.
+- `tdt`: optional solute pinning of parent slip (`xi_pin_sl` per slip family, `gamma_pin`; default off).
+  The flow rule uses xi_eff = xi + xi_pin exp(-gamma/gamma_pin) per system, with gamma the accumulated
+  shear of that system: an excess resistance that delays the onset of slip and is released by the
+  system's own slip, which gives a yield point and a Lueders-type plateau. Hardening acts on xi unchanged.
+  CPU and GPU. With pinning off, results are bit-identical to the previous build. CPU-GPU agreement
+  is 4e-5 relative for gamma_pin = 0.01; a very sharp release (gamma_pin = 0.001) reaches 1e-3,
+  limited by the state tolerance, so keep gamma_pin >= ~0.003.
 
 ## 3.1.0-metal.1: first public version
 
