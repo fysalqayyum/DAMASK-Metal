@@ -854,7 +854,7 @@ int C_Metal_cp_add_phase_model(void* p, int model, int N_sl, const double* C66,
       vec(prm->dot_gamma_0, 0, 0.0); vec(prm->n, 1, 1.0);      vec(prm->a, 2, 1.0);       vec(prm->h_0, 3, 0.0);
       vec(prm->xi_inf, 4, 1.0);      vec(prm->c_1, 5, 0.0);    vec(prm->c_2, 6, 1.0);     vec(prm->f_sat, 7, 0.0);
       vec(prm->h_0_tw_sl, 8, 0.0);   vec(prm->h_0_tw_tw, 9, 0.0); vec(prm->c_3, 10, 1.0); vec(prm->c_4, 11, 0.0);
-      vec(prm->gamma_char, 12, 1.0);
+      vec(prm->gamma_char, 12, 1.0); vec(prm->f_sat_tw, 13, 1.0); vec(prm->m_tw, 14, 1.0);
       prm->N_slip = int(scalars[2]);
       prm->N_twin = N_sl - prm->N_slip;
     } else if (model == CP_MODEL_DTUNG) {

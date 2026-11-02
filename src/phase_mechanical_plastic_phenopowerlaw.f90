@@ -24,6 +24,9 @@ submodule(phase:plastic) phenopowerlaw
       h_0_tw_sl, &                                                                                  !< reference hardening twin - slip
       h_0_tw_tw, &                                                                                  !< reference hardening twin - twin
       gamma_char                                                                                    !< characteristic shear for twins
+    real(pREAL) :: &
+      f_sat_tw = 1.0_pREAL, &                                                                       !< attainable twin volume fraction (1 = released behaviour)
+      m_tw     = 1.0_pREAL                                                                          !< regularisation exponent on the untwinned fraction
     real(pREAL),               allocatable, dimension(:,:) :: &
       h_sl_sl, &                                                                                    !< slip resistance from slip activity
       h_sl_tw, &                                                                                    !< slip resistance from twin activity
@@ -214,10 +217,14 @@ module function plastic_phenopowerlaw_init() result(myPlasticity)
                                                                          defaultVal=misc_ones(size(N_tw))), N_tw)
       prm%c_4            = math_expand(pl%get_as1dReal('c_4',            requiredSize=size(N_tw), &
                                                                          defaultVal=misc_zeros(size(N_tw))), N_tw)
+      prm%f_sat_tw       = pl%get_asReal('f_sat_tw', defaultVal=1.0_pREAL)
+      prm%m_tw           = pl%get_asReal('m_tw',     defaultVal=1.0_pREAL)
       ! sanity checks
       if (any(prm%dot_gamma_0_tw <= 0.0_pREAL))   extmsg = trim(extmsg)//' dot_gamma_0_tw'
       if (any(prm%n_tw           <= 0.0_pREAL))   extmsg = trim(extmsg)//' n_tw'
       if (any(xi_0_tw            <= 0.0_pREAL))   extmsg = trim(extmsg)//' xi_0_tw'
+      if (prm%f_sat_tw <= 0.0_pREAL .or. prm%f_sat_tw > 1.0_pREAL) extmsg = trim(extmsg)//' f_sat_tw'
+      if (prm%m_tw     <= 0.0_pREAL)                              extmsg = trim(extmsg)//' m_tw'
 
     else twinActive
       xi_0_tw = emptyRealArray
@@ -511,6 +518,8 @@ pure subroutine kinetics_tw(Mp,ph,en,&
 
   real(pREAL), dimension(param(ph)%sum_N_tw) :: &
     tau_tw
+  real(pREAL) :: &
+    f_free
   integer :: i
 
 
@@ -518,8 +527,11 @@ pure subroutine kinetics_tw(Mp,ph,en,&
 
     tau_tw = [(math_tensordot(Mp,prm%P_tw(1:3,1:3,i)),i=1,prm%sum_N_tw)]
 
+    f_free = max(0.0_pREAL, 1.0_pREAL - sum(stt%gamma_tw(:,en)/prm%gamma_char)/prm%f_sat_tw)        ! bounded untwinned volume fraction
+    if (dNeq(prm%m_tw,1.0_pREAL)) f_free = f_free**prm%m_tw                                          ! (DAMASK-extensions 3662be3f5, scalar keys)
+
     where(tau_tw > 0.0_pREAL)
-      dot_gamma_tw = (1.0_pREAL-sum(stt%gamma_tw(:,en)/prm%gamma_char)) &                           ! only twin in untwinned volume fraction
+      dot_gamma_tw = f_free &                                                                       ! only twin in untwinned volume fraction
                    * prm%dot_gamma_0_tw*(tau_tw/stt%xi_tw(:,en))**prm%n_tw
     else where
       dot_gamma_tw = 0.0_pREAL
@@ -615,7 +627,8 @@ module function plastic_phenopowerlaw_GPUadd(ph,C66,numerics) result(handle)
                                 [prm%dot_gamma_0_sl,prm%dot_gamma_0_tw, prm%n_sl,prm%n_tw, prm%a_sl,zt, &
                                  prm%h_0_sl_sl,zt, prm%xi_inf_sl,zt+1.0_pREAL, prm%c_1,zt, prm%c_2,zt+1.0_pREAL, &
                                  prm%f_sat_sl_tw,zt, zs,prm%h_0_tw_sl, zs,prm%h_0_tw_tw, &
-                                 zs+1.0_pREAL,prm%c_3, zs,prm%c_4, zs+1.0_pREAL,prm%gamma_char], &
+                                 zs+1.0_pREAL,prm%c_3, zs,prm%c_4, zs+1.0_pREAL,prm%gamma_char, &
+                                 zs+1.0_pREAL,zt+prm%f_sat_tw, zs+1.0_pREAL,zt+prm%m_tw], &
                                 [plasticState(ph)%atol(indexDotState(ph)%xi_sl(1)), &
                                  plasticState(ph)%atol(indexDotState(ph)%gamma_sl(1)),real(ns,pREAL)],numerics)
     end associate

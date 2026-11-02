@@ -1223,7 +1223,7 @@ struct cp_model_dtung {
 
 //--------------------------------------------------------------------------------------------------
 //> stock phenopowerlaw WITH twinning (phase_mechanical_plastic_phenopowerlaw.f90): twin systems are
-//> appended to the slip systems (rank-1, unidirectional: tau > 0 only, factor 1 - sum(gamma_tw/gamma_char)).
+//> appended to the slip systems (rank-1, unidirectional: tau > 0 only, factor max(0, 1 - F/f_sat_tw)**m_tw, F = sum(gamma_tw/gamma_char)).
 //> Systems 0..N_slip-1: slip, N_slip..N_slip+N_twin-1: twin. X = [xi_sl, xi_tw | gamma_sl, gamma_tw]
 //> (DAMASK's state order). h_sl_sl holds the combined interaction [h_sl_sl h_sl_tw; h_tw_sl h_tw_tw].
 struct cp_phenotw_param {
@@ -1235,6 +1235,7 @@ struct cp_phenotw_param {
   cp_pair dot_gamma_0[CP_MAX_SL], n[CP_MAX_SL], a[CP_MAX_SL], h_0[CP_MAX_SL], xi_inf[CP_MAX_SL];
   cp_pair c_1[CP_MAX_SL], c_2[CP_MAX_SL], f_sat[CP_MAX_SL];                                         // slip entries
   cp_pair h_0_tw_sl[CP_MAX_SL], h_0_tw_tw[CP_MAX_SL], c_3[CP_MAX_SL], c_4[CP_MAX_SL], gamma_char[CP_MAX_SL]; // twin entries
+  cp_pair f_sat_tw[CP_MAX_SL], m_tw[CP_MAX_SL];                                                     // twin-fraction bound (same value on every twin)
   float   atol_xi;
   float   atol_gamma;
   int     N_sl;                                                                                     // total (slip + twin)
@@ -1267,7 +1268,10 @@ struct cp_model_phenotw {
   static void kinetics(CP_CONSTANT param& p, CP_THREAD const H* S, CP_THREAD const H* X, CP_THREAD const H*,
                        CP_THREAD const H*, H, CP_THREAD H* gd, CP_THREAD typename cp_ops<H>::J* dgd, CP_THREAD bool* pos) {
     typedef cp_ops<H> O;
-    H f_untw = O::c(1.0f) - sum_F<H>(p, X);
+    const int t0 = p.N_slip;                                                                        // f_free = max(0, 1 - F/f_sat_tw)**m_tw
+    H f_untw = O::c(1.0f) - sum_F<H>(p, X) / O::ld(p.f_sat_tw[t0]);
+    if (O::f(f_untw) < 0.0f) f_untw = O::c(0.0f);
+    if (p.N_twin > 0 && O::f(O::ld(p.m_tw[t0])) != 1.0f) f_untw = cp_pow0<H>(f_untw, O::ld(p.m_tw[t0]));
     for (int i = 0; i < N; ++i) {
       H tp, tn;
       cp_resolved<H>(p, i, S, tp, tn);

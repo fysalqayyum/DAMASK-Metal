@@ -673,6 +673,7 @@ int main() {
       p.xi_inf[i] = pr(i < m.ns ? m.xinf[i] : 1.0); p.c_1[i] = pr(m.c1[i]); p.c_2[i] = pr(i < m.ns ? m.c2[i] : 1.0); p.f_sat[i] = pr(m.fsat[i]);
       p.h_0_tw_sl[i] = pr(m.h0ts[i]); p.h_0_tw_tw[i] = pr(m.h0tt[i]); p.c_3[i] = pr(i >= m.ns && i < m.n ? m.c3[i] : 1.0); p.c_4[i] = pr(m.c4[i]);
       p.gamma_char[i] = pr(i >= m.ns && i < m.n ? m.gch[i] : 1.0);
+      p.f_sat_tw[i] = pr(1.0); p.m_tw[i] = pr(1.0);                                              // twin-fraction bound off (released law)
     }
     p.atol_xi = 1.0f; p.atol_gamma = 1e-6f; p.N_sl = m.n; p.N_slip = m.ns; p.N_twin = m.nt;
 
