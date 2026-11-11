@@ -87,6 +87,13 @@ submodule(phase) mechanical
       integer :: handle
     end function plastic_dislotungsten_GPUadd
 
+    module function plastic_kocksmecking_GPUadd(ph,C66,numerics) result(handle)
+      integer, intent(in) :: ph
+      real(pREAL), dimension(6,6), intent(in) :: C66
+      real(pREAL), dimension(7), intent(in) :: numerics
+      integer :: handle
+    end function plastic_kocksmecking_GPUadd
+
     module function plastic_tdt_GPUadd(ph,C66,numerics) result(handle)
       integer, intent(in) :: ph
       real(pREAL), dimension(6,6), intent(in) :: C66
@@ -256,6 +263,11 @@ submodule(phase) mechanical
       integer,          intent(in) :: ph
       character(len=*), intent(in) :: group
     end subroutine plastic_twintrip_result
+
+    module subroutine plastic_kocksmecking_result(ph,group)
+      integer,          intent(in) :: ph
+      character(len=*), intent(in) :: group
+    end subroutine plastic_kocksmecking_result
 
     module subroutine plastic_dislotungsten_result(ph,group)
       integer,          intent(in) :: ph
@@ -503,6 +515,9 @@ module subroutine mechanical_result(group,ph)
 
     case(MECHANICAL_PLASTICITY_TWINTRIP)
       call plastic_twintrip_result(ph,group//'mechanical/')
+
+    case(MECHANICAL_PLASTICITY_KOCKSMECKING)
+      call plastic_kocksmecking_result(ph,group//'mechanical/')
 
     case(MECHANICAL_PLASTICITY_NONLOCAL)
       call plastic_nonlocal_result(ph,group//'mechanical/')
@@ -1729,6 +1744,9 @@ module subroutine phase_mechanical_constitutive_GPU(Delta_t,ce_start,ce_end,elig
           GPU_C66(1:6,1:6,ph) = phase_damage_C66(phase_homogenizedC66(ph,1),ph,1)
           GPU_handle(ph) = plastic_dislotungsten_GPUadd(ph,GPU_C66(1:6,1:6,ph),numerics)
           GPU_ndep(ph) = 2*plasticState(ph)%sizeState/3                                              ! [tau_pass, Lambda_sl], 2 x N_sl
+        case (MECHANICAL_PLASTICITY_KOCKSMECKING)                                                    ! slip resistance from the state (no dependent state)
+          GPU_C66(1:6,1:6,ph) = phase_damage_C66(phase_homogenizedC66(ph,1),ph,1)
+          GPU_handle(ph) = plastic_kocksmecking_GPUadd(ph,GPU_C66(1:6,1:6,ph),numerics)
         case (MECHANICAL_PLASTICITY_TDT)
           GPU_CfromState(ph) = .true.
           GPU_C66(1:6,1:6,ph) = elastic_C66(ph,1)                                                   ! parent; homogenized on the GPU

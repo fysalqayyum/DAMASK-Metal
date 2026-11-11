@@ -41,6 +41,10 @@ submodule(phase:mechanical) plastic
       logical, dimension(:), allocatable :: myPlasticity
     end function plastic_twintrip_init
 
+    module function plastic_kocksmecking_init()  result(myPlasticity)
+      logical, dimension(:), allocatable :: myPlasticity
+    end function plastic_kocksmecking_init
+
     module function plastic_nonlocal_init()      result(myPlasticity)
       logical, dimension(:), allocatable :: &
         myPlasticity
@@ -108,6 +112,13 @@ submodule(phase:mechanical) plastic
       real(pREAL),                     intent(in)  :: Delta_t
       integer,                         intent(in)  :: ph, en
     end subroutine tdt_LpAndItsTangent
+
+    pure module subroutine kocksmecking_LpAndItsTangent(Lp,dLp_dMp,Mp,ph,en)
+      real(pREAL), dimension(3,3),     intent(out) :: Lp
+      real(pREAL), dimension(3,3,3,3), intent(out) :: dLp_dMp
+      real(pREAL), dimension(3,3),     intent(in)  :: Mp
+      integer,                         intent(in)  :: ph, en
+    end subroutine kocksmecking_LpAndItsTangent
 
     pure module subroutine dislotungsten_LpAndItsTangent(Lp,dLp_dMp,Mp,ph,en)
       real(pREAL), dimension(3,3),     intent(out) :: &
@@ -208,6 +219,12 @@ submodule(phase:mechanical) plastic
       integer, intent(in) :: ph, en
     end subroutine twintrip_dependentState
 
+    module function kocksmecking_dotState(Mp,ph,en) result(dotState)
+      real(pREAL), dimension(3,3), intent(in) :: Mp
+      integer,                     intent(in) :: ph, en
+      real(pREAL), dimension(plasticState(ph)%sizeDotState) :: dotState
+    end function kocksmecking_dotState
+
     module function dislotungsten_dotState(Mp,ph,en) result(dotState)
       real(pREAL), dimension(3,3),  intent(in) :: &
         Mp                                                                                          !< Mandel stress
@@ -285,6 +302,7 @@ module subroutine plastic_init
   where(plastic_nonlocal_init())          mechanical_plasticity_type = MECHANICAL_PLASTICITY_NONLOCAL
   where(plastic_tdt_init())               mechanical_plasticity_type = MECHANICAL_PLASTICITY_TDT
   where(plastic_twintrip_init())          mechanical_plasticity_type = MECHANICAL_PLASTICITY_TWINTRIP
+  where(plastic_kocksmecking_init())      mechanical_plasticity_type = MECHANICAL_PLASTICITY_KOCKSMECKING
 
   if (any(mechanical_plasticity_type == UNDEFINED)) call IO_error(200, label1='plasticity')
 
@@ -352,6 +370,9 @@ module subroutine plastic_LpAndItsTangents(Lp, dLp_dS, dLp_dFi, &
       case (MECHANICAL_PLASTICITY_TWINTRIP) plasticType
         call twintrip_LpAndItsTangent(Lp,dLp_dMp,Mp,ph,en)
 
+      case (MECHANICAL_PLASTICITY_KOCKSMECKING) plasticType
+        call kocksmecking_LpAndItsTangent(Lp,dLp_dMp,Mp,ph,en)
+
     end select plasticType
 
     do i=1,3; do j=1,3
@@ -407,6 +428,9 @@ module function plastic_dotState(subdt,ph,en) result(dotState)
 
       case (MECHANICAL_PLASTICITY_TWINTRIP) plasticType
         dotState = twintrip_dotState(Mp,ph,en)
+
+      case (MECHANICAL_PLASTICITY_KOCKSMECKING) plasticType
+        dotState = kocksmecking_dotState(Mp,ph,en)
 
       case (MECHANICAL_PLASTICITY_NONLOCAL) plasticType
         call nonlocal_dotState(Mp,subdt,ph,en)

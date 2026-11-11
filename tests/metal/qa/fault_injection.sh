@@ -20,7 +20,7 @@ for prec in fast mixed; do
   for k in -1 0 1 2 3 4 5 6; do                                                                     # -1: no injection (baseline)
     print "=== $prec inject $k" >> $log
     DAMASK_METAL_PRECISION=$prec DAMASK_METAL_INJECT=$k $bin/test_cp_gpu $src 2>&1 | grep -E "accepted|not converged" | sed 's/^/pheno /' >> $log
-    DAMASK_METAL_PRECISION=$prec DAMASK_METAL_INJECT=$k $bin/test_cp_gpu_models $src 2>&1 | grep -o '^[A-C]\..*(certificate rejected [0-9]*)' | sed 's/^/models /' >> $log
+    DAMASK_METAL_PRECISION=$prec DAMASK_METAL_INJECT=$k $bin/test_cp_gpu_models $src 2>&1 | grep -o '^[A-D]\..*(certificate rejected [0-9]*)' | sed 's/^/models /' >> $log
     [[ -n $cap ]] && DAMASK_METAL_PRECISION=$prec DAMASK_METAL_INJECT=$k $bin/bench_cp_replay $src $cap 1 2>&1 | grep -o 'CPU fallback.*)' | sed 's/^/replay /' >> $log
     sleep 1
   done

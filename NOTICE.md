@@ -13,6 +13,8 @@ Faisal Qayyum, starting October 2026; the complete history is in this repository
 - Plasticity models `tdt` and `twintrip`: `src/phase_mechanical_plastic_tdt.f90`,
   `src/phase_mechanical_plastic_twintrip.f90`, and example configurations in
   `examples/config/phase/mechanical/plastic/`
+- Plasticity model `kocksmecking` (experimental): `src/phase_mechanical_plastic_kocksmecking.f90` and
+  `examples/config/phase/mechanical/plastic/kocksmecking_IN718-aged.yaml`
 - Tests and quality checks: `tests/metal/`
 - Benchmarks: `benchmarks/`
 - Documentation and project files: `README.md` (the original is kept as `README-DAMASK.md`),
@@ -29,7 +31,7 @@ Faisal Qayyum, starting October 2026; the complete history is in this repository
 | `src/grid/spectral_utilities.f90` | `GPU` numerics, Gamma convolution on the GPU |
 | `src/homogenization.f90`, `src/homogenization_mechanical.f90` | batching of eligible cells for the GPU |
 | `src/phase.f90`, `src/phase_mechanical.f90` | GPU constitutive update (setup, submit, unpack) |
-| `src/phase_mechanical_plastic.f90` | registration of tdt and twintrip, shared helpers |
+| `src/phase_mechanical_plastic.f90` | registration of tdt, twintrip and kocksmecking, shared helpers |
 | `src/phase_mechanical_plastic_{phenopowerlaw,kinehardening,dislotungsten}.f90` | parameter upload to the GPU (`*_GPUadd`) |
 | `src/phase_mechanical_elastic.f90`, `src/phase_mechanical_eigen.f90` | stiffness and eigenstrain hooks for tdt and twintrip |
 | `src/crystal.f90` | lattice rotations of twins and martensites (`crystal_rotation_twin` etc.) |

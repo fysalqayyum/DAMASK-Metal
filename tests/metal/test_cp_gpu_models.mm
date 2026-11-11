@@ -2,6 +2,8 @@
 // the CPU, via the public API (C_Metal_cp_add_phase_model / C_Metal_cp_integrate, incl. certificate):
 //  A. kinehardening, 12 slip systems, tension -> compression (back-stress flips)
 //  B. phenopowerlaw with 9 slip systems: runs in the padded 12-system kernel; CPU reference unpadded
+//  C. dislotungsten, 12 slip systems, T = 300 K
+//  D. kocksmecking (experimental), 12 slip systems, aged IN718 parameters (Charpagne et al. 2021, Table 1)
 // usage: test_cp_gpu_models <src/grid/metal directory>
 #include <cmath>
 #include <cstdio>
@@ -175,6 +177,23 @@ int main(int argc, char** argv) {
     auto init = [&](std::vector<double>& st) { for (int i = 0; i < N; ++i) { st[i] = 1e12; st[N+i] = 1.0; } };
     const double Fdot[9] = {2e-4, 0, 0, 0, -1e-4, 0, 0, 0, -1e-4}, Cel[3] = {523e9, 203e9, 160e9};
     fails += run<cp_model_dtung<12>>(ctx, "C. dislotungsten (12, T = 300 K)", CP_MODEL_DTUNG, N, v, sc, fill, init, Fdot, 0.5, 30, 120, false, 300.0, Cel);
+  }
+  {
+    const int N = 12;
+    const double mu = std::sqrt(109.6e9*(259.6e9-179e9)/2.0), chi = 1.0;                           // Charpagne et al. 2021, Table 1
+    const double vals[6] = {1e-3, 20, 400e6, 0.257e-9, 10, 2.57e-9};                                // dot_gamma_0, n, g_0, b, K, y_c
+    std::vector<double> v(6*N);
+    for (int k = 0; k < 6; ++k) for (int i = 0; i < N; ++i) v[k*N+i] = vals[k];
+    const std::vector<double> sc = {1.0, 1e-6, chi, mu};
+    auto fill = [&](cp_km_param& p, std::vector<double>& h) {
+      for (int k = 0; k < N*N; ++k) { h[k] = 0.1; p.h_sl_sl[k] = pr(0.1); }
+      cp_pair* f[6] = {p.dot_gamma_0, p.n, p.g_0, p.b, p.K, p.y_c};
+      for (int k = 0; k < 6; ++k) for (int i = 0; i < N; ++i) f[k][i] = pr(vals[k]);
+      p.chi_mu = pr(chi*mu);
+    };
+    auto init = [&](std::vector<double>& st) { for (int i = 0; i < N; ++i) st[i] = 1.5e12; };
+    const double Fdot[9] = {1e-4, 0, 0, 0, -0.5e-4, 0, 0, 0, -0.5e-4}, Cel[3] = {259.6e9, 179e9, 109.6e9};
+    fails += run<cp_model_km<12>>(ctx, "D. kocksmecking (12)", CP_MODEL_KM, N, v, sc, fill, init, Fdot, 1.0, 30, 150, false, 0.0, Cel);
   }
   C_Metal_delete(ctx);
   return fails;

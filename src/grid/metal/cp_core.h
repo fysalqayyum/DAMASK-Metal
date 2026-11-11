@@ -1222,6 +1222,113 @@ struct cp_model_dtung {
 };
 
 //--------------------------------------------------------------------------------------------------
+//> kocksmecking (phase_mechanical_plastic_kocksmecking.f90, experimental): power-law kinetics as
+//> phenopowerlaw slip with the resistance g = g_0 + chi mu b sqrt(h rho) computed from the state,
+//> Kocks-Mecking density rate dot_rho = (sqrt(h rho)/K - 2 y_c rho) |gd| / b; non-Schmid allowed
+//> (no slip where the larger resolved stress is not positive). X = [rho(N), gamma(N)], no delta or
+//> dependent state (g is a function of X, so the certificate checks it implicitly).
+struct cp_km_param {
+  cp_pair C66[36];
+  cp_pair P_sl    [CP_MAX_SL*9];
+  cp_pair P_nS_pos[CP_MAX_SL*9];
+  cp_pair P_nS_neg[CP_MAX_SL*9];
+  cp_pair h_sl_sl [CP_MAX_SL*CP_MAX_SL];                                                            // a_ab, (i,j) at i+N*j
+  cp_pair dot_gamma_0[CP_MAX_SL], n[CP_MAX_SL], g_0[CP_MAX_SL], b[CP_MAX_SL], K[CP_MAX_SL], y_c[CP_MAX_SL];
+  cp_pair chi_mu;                                                                                   // chi*mu [Pa]
+  float   atol_xi;                                                                                  // atol_rho
+  float   atol_gamma;
+  int     N_sl;
+  int     pad;
+};
+
+template<int NSL>
+struct cp_model_km {
+  enum { N = NSL, ND = 2*NSL, NY = 0, NDEP = 0, NBX = 2, NBY = 0, NBD = 0, FLOW = 0, STATE_C = 0, FLAT = 0, DC = 0, DT_STATE = 0, PRECOND = 0, FI_STATE = 0, ACCEL = 0 };
+  typedef cp_km_param param;
+  static float pad_value(int, int) { return 0.0f; }                                                 // rho = 0, gamma = 0 (padded: g = g_0 = 1, gd = 0)
+
+  //> sqrt(sum_j h_ij rho_j) per system (forest term)
+  template<typename H>
+  static void forest(CP_CONSTANT param& p, CP_THREAD const H* X, CP_THREAD H* s) {
+    typedef cp_ops<H> O;
+    for (int i = 0; i < N; ++i) {
+      H a = O::c(0.0f);
+      for (int j = 0; j < N; ++j) a = a + O::ld(p.h_sl_sl[i+N*j]) * X[j];
+      s[i] = O::sq(a);
+    }
+  }
+  template<typename H>
+  static void kinetics(CP_CONSTANT param& p, CP_THREAD const H* S, CP_THREAD const H* X, CP_THREAD const H*,
+                       CP_THREAD const H*, H, CP_THREAD H* gd, CP_THREAD typename cp_ops<H>::J* dgd, CP_THREAD bool* pos) {
+    typedef cp_ops<H> O;
+    H sf[N];
+    forest<H>(p, X, sf);
+    for (int i = 0; i < N; ++i) {
+      H tp, tn;
+      cp_resolved<H>(p, i, S, tp, tn);
+      pos[i] = tp > tn;
+      H tm = pos[i] ? tp : tn;
+      H g  = O::ld(p.g_0[i]) + O::ld(p.chi_mu) * O::ld(p.b[i]) * sf[i];
+      H r  = tm / g;
+      bool active = O::f(r) > 0.0f;
+      H mag = active ? O::ld(p.dot_gamma_0[i]) * O::ex(O::ld(p.n[i]) * O::lg(r)) : O::c(0.0f);
+      gd[i]  = pos[i] ? mag : -mag;
+      dgd[i] = active ? O::f(gd[i]) * O::f(O::ld(p.n[i])) / O::f(tm) : 0.0f;
+    }
+  }
+  template<typename H>
+  static void dot_state(CP_CONSTANT param& p, CP_THREAD const H* S, CP_THREAD const H* X, CP_THREAD const H* Y,
+                        CP_THREAD const H* D, H T, CP_THREAD H* dX) {
+    typedef cp_ops<H> O;
+    H gd[N], sf[N];
+    typename O::J dgd[N];
+    bool pos[N];
+    kinetics<H>(p, S, X, Y, D, T, gd, dgd, pos);
+    forest<H>(p, X, sf);
+    for (int i = 0; i < N; ++i) {
+      H ag = O::ab(gd[i]);
+      dX[N+i] = ag;
+      dX[i]   = (sf[i] / O::ld(p.K[i]) - O::c(2.0f) * O::ld(p.y_c[i]) * X[i]) * ag / O::ld(p.b[i]);
+    }
+  }
+  template<typename H>
+  static void delta_state(CP_CONSTANT param&, CP_THREAD const H*, CP_THREAD const H*, CP_THREAD H*, CP_THREAD const H*, H) {}
+  template<typename H>
+  static void dependent(CP_CONSTANT param&, CP_THREAD const H*, CP_THREAD const H*, H, CP_THREAD H*) {}
+  static float atol(CP_CONSTANT param& p, int j) { return j < N ? p.atol_xi : p.atol_gamma; }
+  //> slip resistance of system 0 (trust-region floor for S ~ 0)
+  template<typename H>
+  static float stress_scale(CP_CONSTANT param& p, CP_THREAD const H* X) {
+    typedef cp_ops<H> O;
+    float a = 0.0f;
+    for (int j = 0; j < N; ++j) a += cp_ldJ<float>(p.h_sl_sl[N*j]) * O::f(X[j]);
+    return cp_ldJ<float>(p.g_0[0]) + cp_ldJ<float>(p.chi_mu) * cp_ldJ<float>(p.b[0]) * DF_SQRT(CP_FMAX(a, 0.0f));
+  }
+  template<typename H>
+  static float cap_ratio(CP_CONSTANT param& p, CP_THREAD const H* S, CP_THREAD const H* X, CP_THREAD const H*,
+                         CP_THREAD const H*, H, float dt, float kappa) {
+    typedef cp_ops<H> O;
+    float q = 0.0f;
+    for (int i = 0; i < N; ++i) {
+      float g0 = cp_ldJ<float>(p.dot_gamma_0[i]);
+      if (!(g0 > 0.0f)) continue;                                                                   // padded system
+      float t = 0.0f, a = 0.0f;
+      for (int k = 0; k < 6; ++k) {
+        int ka = cp_voigt_i(k), kb = cp_voigt_j(k);
+        float c = k < 3 ? cp_ldJ<float>(p.P_sl[9*i+CP_IDX(ka,ka)])
+                        : cp_ldJ<float>(p.P_sl[9*i+CP_IDX(ka,kb)]) + cp_ldJ<float>(p.P_sl[9*i+CP_IDX(kb,ka)]);
+        t += O::f(S[k]) * c;
+      }
+      for (int j = 0; j < N; ++j) a += cp_ldJ<float>(p.h_sl_sl[i+N*j]) * O::f(X[j]);
+      float g = cp_ldJ<float>(p.g_0[i]) + cp_ldJ<float>(p.chi_mu) * cp_ldJ<float>(p.b[i]) * DF_SQRT(CP_FMAX(a, 0.0f));
+      float r_cap = DF_EXP(DF_LOG(kappa / (dt * g0)) / cp_ldJ<float>(p.n[i]));
+      q = CP_FMAX(q, (t < 0.0f ? -t : t) / g / r_cap);
+    }
+    return q;
+  }
+};
+
+//--------------------------------------------------------------------------------------------------
 //> stock phenopowerlaw WITH twinning (phase_mechanical_plastic_phenopowerlaw.f90): twin systems are
 //> appended to the slip systems (rank-1, unidirectional: tau > 0 only, factor max(0, 1 - F/f_sat_tw)**m_tw, F = sum(gamma_tw/gamma_char)).
 //> Systems 0..N_slip-1: slip, N_slip..N_slip+N_twin-1: twin. X = [xi_sl, xi_tw | gamma_sl, gamma_tw]

@@ -113,8 +113,8 @@ core:
 | `FI_STATE` | isotropic eigenstrain of the state, Fi = j(X) I | twintrip (α′) |
 | `ACCEL` | Anderson(1) acceleration of the state iteration instead of the damper | twintrip |
 
-Policies: `cp_model_pheno`, `cp_model_kineh`, `cp_model_dtung` and `cp_model_phenotw` are in
-`cp_core.h`; `cp_model_tdt` and `cp_model_twintrip` are in `cp_models_composite.h`. Slip counts are
+Policies: `cp_model_pheno`, `cp_model_kineh`, `cp_model_dtung`, `cp_model_phenotw` and `cp_model_km`
+(`kocksmecking`) are in `cp_core.h`; `cp_model_tdt` and `cp_model_twintrip` are in `cp_models_composite.h`. Slip counts are
 padded to 12/24/30/48; padded systems are inert.
 
 ## Adding a plasticity model

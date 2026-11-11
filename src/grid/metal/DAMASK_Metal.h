@@ -32,7 +32,8 @@ enum {
   CP_MODEL_DTUNG    = 3,                                                                            // dislotungsten
   CP_MODEL_PHENOTW  = 4,                                                                            // phenopowerlaw with twinning
   CP_MODEL_TDT      = 5,                                                                            // tdt (C_Metal_cp_add_phase_tdt)
-  CP_MODEL_TWINTRIP = 6                                                                             // twintrip (C_Metal_cp_add_phase_twintrip)
+  CP_MODEL_TWINTRIP = 6,                                                                            // twintrip (C_Metal_cp_add_phase_twintrip)
+  CP_MODEL_KM       = 7                                                                             // kocksmecking (experimental)
 };
 
 //> out = Gamma * field with average aim, field/out real(3,3,n1,n2,n3) (may alias)
@@ -63,6 +64,8 @@ int C_Metal_cp_add_phase(void* ctx, int N_sl, const double* C66,
 //>                         [dot_gamma_0, n, a, h_0_sl-sl, xi_inf, c_1, c_2, f_sat_sl-tw, h_0_tw-sl, h_0_tw-tw,
 //>                          c_3, c_4, gamma_char] (slip/twin-only entries unused), h_sl_sl = combined (N,N)
 //>                         [h_sl_sl h_sl_tw; h_tw_sl h_tw_tw], scalars = [atol_xi, atol_gamma, N_slip]
+//>               model 7 = kocksmecking, vecs = [dot_gamma_0, n, g_0, b, K, y_c] (6*N_sl), h_sl_sl = a_ab,
+//>                         scalars = [atol_rho, atol_gamma, chi, mu]
 //> scalars = [atol_xi, atol_gamma] (CP_MODEL_PHENO, CP_MODEL_KINEH). Any N_sl <= 48 (padded to 12/24/30/48 internally).
 //> For models with a dependent state (CP_MODEL_DTUNG), state0/state of C_Metal_cp_integrate hold DAMASK's state followed
 //> by the dependent state ([tau_pass, Lambda_sl]).

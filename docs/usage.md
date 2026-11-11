@@ -44,7 +44,7 @@ solver:
 A phase is integrated on the GPU when all of these hold:
 
 - its plasticity model has a GPU implementation: `phenopowerlaw`, `kinehardening`,
-  `dislotungsten`, `tdt`, `twintrip`;
+  `dislotungsten`, `tdt`, `twintrip`, `kocksmecking`;
 - it has no damage and no eigenstrain kinematics (e.g. thermal expansion);
 - its homogenization has one constituent and mechanical homogenization `type: pass`;
 - DAMASK runs as a single MPI rank (`mpiexec -n 1`, or without `mpiexec`).

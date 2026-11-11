@@ -275,7 +275,7 @@ bool cp_init(Context* ctx, const char* src) {
   }
   id<MTLComputePipelineState> ps = [ctx->device newComputePipelineStateWithFunction:[lib newFunctionWithName:@"cp_sizes"] error:&err];
   if (!ps) return false;
-  id<MTLBuffer> s = [ctx->device newBufferWithLength:9*sizeof(uint32_t) options:MTLResourceStorageModeShared];
+  id<MTLBuffer> s = [ctx->device newBufferWithLength:10*sizeof(uint32_t) options:MTLResourceStorageModeShared];
   id<MTLCommandBuffer> cb = [ctx->queue commandBuffer];
   id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
   [enc setComputePipelineState:ps];
@@ -285,11 +285,11 @@ bool cp_init(Context* ctx, const char* src) {
   [cb commit];
   [cb waitUntilCompleted];
   const uint32_t* g = static_cast<const uint32_t*>(s.contents);
-  const uint32_t h[9] = {uint32_t(sizeof(cp_pheno_param)), uint32_t(sizeof(cp_numerics)),
-                         uint32_t(sizeof(CPLaunch)), uint32_t(sizeof(df64)), uint32_t(sizeof(cp_kineh_param)),
-                         uint32_t(sizeof(cp_dtung_param)), uint32_t(sizeof(cp_phenotw_param)), uint32_t(sizeof(cp_tdt_param)),
-                         uint32_t(sizeof(cp_twintrip_param))};
-  for (int k = 0; k < 9; ++k)
+  const uint32_t h[10] = {uint32_t(sizeof(cp_pheno_param)), uint32_t(sizeof(cp_numerics)),
+                          uint32_t(sizeof(CPLaunch)), uint32_t(sizeof(df64)), uint32_t(sizeof(cp_kineh_param)),
+                          uint32_t(sizeof(cp_dtung_param)), uint32_t(sizeof(cp_phenotw_param)), uint32_t(sizeof(cp_tdt_param)),
+                          uint32_t(sizeof(cp_twintrip_param)), uint32_t(sizeof(cp_km_param))};
+  for (int k = 0; k < 10; ++k)
     if (g[k] != h[k]) {
       std::fprintf(stderr, "DAMASK_Metal: data layout mismatch host/GPU (item %d: %u vs %u)\n", k, h[k], g[k]);
       return false;
@@ -824,7 +824,8 @@ int C_Metal_cp_add_phase_model(void* p, int model, int N_sl, const double* C66,
     CPPhase ph;
     ph.model = model; ph.N = N_sl; ph.Np = Np;
     const char* policy = model == CP_MODEL_PHENO ? "cp_model_pheno" : model == CP_MODEL_KINEH ? "cp_model_kineh"
-                       : model == CP_MODEL_DTUNG ? "cp_model_dtung" : model == CP_MODEL_PHENOTW ? "cp_model_phenotw" : nullptr;
+                       : model == CP_MODEL_DTUNG ? "cp_model_dtung" : model == CP_MODEL_PHENOTW ? "cp_model_phenotw"
+                       : model == CP_MODEL_KM ? "cp_model_km" : nullptr;
     if (!policy) return -2;
     if (!cp_pipelines(ctx, std::string(policy) + "<" + std::to_string(Np) + ">", ph)) return -3;
 
@@ -869,6 +870,13 @@ int C_Metal_cp_add_phase_model(void* p, int model, int N_sl, const double* C66,
       prm->D = cp_to_pair(scalars[2]); prm->D_0 = cp_to_pair(scalars[3]); prm->Q_cl = cp_to_pair(scalars[4]);
       prm->mu = cp_to_pair(scalars[5]); prm->nu = cp_to_pair(scalars[6]); prm->k_B = cp_to_pair(scalars[7]);
       prm->dipoleformation = scalars[8] != 0.0;
+    } else if (model == CP_MODEL_KM) {
+      ph.param = [ctx->device newBufferWithLength:sizeof(cp_km_param) options:MTLResourceStorageModeShared];
+      cp_km_param* prm = static_cast<cp_km_param*>(ph.param.contents);
+      fill_common(prm);
+      vec(prm->dot_gamma_0, 0, 0.0); vec(prm->n, 1, 1.0); vec(prm->g_0, 2, 1.0); vec(prm->b, 3, 1.0);
+      vec(prm->K, 4, 1.0);           vec(prm->y_c, 5, 0.0);
+      prm->chi_mu = cp_to_pair(scalars[2]*scalars[3]);
     } else {
       ph.param = [ctx->device newBufferWithLength:sizeof(cp_kineh_param) options:MTLResourceStorageModeShared];
       cp_kineh_param* prm = static_cast<cp_kineh_param*>(ph.param.contents);
@@ -1006,6 +1014,7 @@ int C_Metal_cp_integrate(void* p, int phase, int n, int n_state, double dt,
     CP_CASE(MODEL, POLICY, 12) CP_CASE(MODEL, POLICY, 24) CP_CASE(MODEL, POLICY, 30) CP_CASE(MODEL, POLICY, 48)
     CP_NP_CASES(CP_MODEL_PHENO, cp_model_pheno) CP_NP_CASES(CP_MODEL_KINEH, cp_model_kineh)
     CP_NP_CASES(CP_MODEL_DTUNG, cp_model_dtung) CP_NP_CASES(CP_MODEL_PHENOTW, cp_model_phenotw)
+    CP_NP_CASES(CP_MODEL_KM, cp_model_km)
 #undef CP_NP_CASES
 #undef CP_CASE
 #define CP_TDT_CASE(A, B, C)                                                                        \

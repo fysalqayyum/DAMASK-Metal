@@ -22,6 +22,7 @@ It is an independent extension of DAMASK, not an official DAMASK release. For DA
 | `dislotungsten` | ✓ | slow-converging points fall back to the CPU (~1–11 %) |
 | `tdt` (new: twinning, detwinning, slip in twins; hcp) | ✓ | **experimental**: not yet calibrated against experiments |
 | `twintrip` (new: TWIP/TRIP, γ→ε→α′; fcc) | ✓ | **experimental**: not yet calibrated against experiments |
+| `kocksmecking` (new: power law, Taylor resistance, Kocks–Mecking density per slip system) | ✓ | **experimental**: equations and example values of Charpagne et al. 2021 (aged IN718), not refitted |
 | all other models, damage, eigenstrain kinematics, multi-constituent homogenization | CPU | unchanged DAMASK behaviour |
 
 GPU requirements: grid solver, one MPI rank, single-constituent homogenization. Everything else

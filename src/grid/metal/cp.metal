@@ -31,6 +31,7 @@ kernel void cp_sizes(device uint* s [[buffer(0)]], uint i [[thread_position_in_g
   s[6] = sizeof(cp_phenotw_param);
   s[7] = sizeof(cp_tdt_param);
   s[8] = sizeof(cp_twintrip_param);
+  s[9] = sizeof(cp_km_param);
 }
 
 #if defined(CP_MODEL_TYPE)

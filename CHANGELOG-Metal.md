@@ -5,6 +5,15 @@ Versions are named `<DAMASK version>-metal.<n>`.
 ## Unreleased
 
 ### Added
+- `kocksmecking` (experimental): new plasticity model, slip only. Power-law kinetics as `phenopowerlaw`,
+  slip resistance g = g_0 + chi mu b sqrt(sum a_ab rho_b) and Kocks-Mecking evolution of the dislocation
+  density per slip system, dot_rho = (sqrt(sum a_ab rho_b)/K - 2 y_c rho) |dot_gamma| / b (equations of
+  Charpagne et al., Acta Mater. 215:117037, 2021). Keys `N_sl`, `dot_gamma_0_sl`, `n_sl`, `g_0_sl`, `b_sl`,
+  `rho_0`, `K`, `y_c` (per slip family), `chi` (default 1), `mu`, `h_sl-sl` (a_ab), `atol_rho`, `atol_gamma`;
+  outputs `rho_sl`, `g_sl`, `gamma_sl`. CPU and GPU (policy `cp_model_km`); non-Schmid law allowed.
+  Example: `examples/config/phase/mechanical/plastic/kocksmecking_IN718-aged.yaml` (aged Inconel 718,
+  Table 1 of that paper). Stock models are bit-identical to the previous build (pheno, phenotw and dtung
+  at 16³, CPU and GPU).
 - `tdt`: optional parent slip hardening by the total twin fraction, with the keys and law of
   `phenopowerlaw` (`c_1`, `c_2`, `f_sat_sl-tw`; defaults off), on the CPU and the GPU.
 - `tdt`: optional solute pinning of parent slip (`xi_pin_sl` per slip family, `gamma_pin`; default off).

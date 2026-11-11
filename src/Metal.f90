@@ -19,7 +19,8 @@ module Metal
     METAL_MODEL_DTUNG    = 3_C_INT, &
     METAL_MODEL_PHENOTW  = 4_C_INT, &
     METAL_MODEL_TDT      = 5_C_INT, &
-    METAL_MODEL_TWINTRIP = 6_C_INT
+    METAL_MODEL_TWINTRIP = 6_C_INT, &
+    METAL_MODEL_KOCKSMECKING = 7_C_INT
   type(C_PTR), public :: &
     Metal_ctx = C_NULL_PTR                                                                          !< backend, created by spectral_utilities_init
   integer, public :: &

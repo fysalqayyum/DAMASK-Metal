@@ -1,0 +1,40 @@
+type: kocksmecking
+
+# EXPERIMENTAL (DAMASK-Metal). Power-law slip, Taylor (Franciosi) slip resistance and Kocks-Mecking
+# evolution of the dislocation density on each slip system:
+#   dot_gamma = dot_gamma_0_sl |tau/g|^n_sl sgn(tau)
+#   g         = g_0_sl + chi mu b_sl sqrt(sum_b a_ab rho_b)                     (a_ab from h_sl-sl)
+#   dot_rho   = (sqrt(sum_b a_ab rho_b)/K - 2 y_c rho) |dot_gamma| / b_sl
+# Values: aged Inconel 718 (8 h 720 °C + 8 h 620 °C), Charpagne et al. 2021, Table 1, fitted there to the
+# macroscopic tension curve with ABAQUS (C3D8, 10x10x10 elements, one grain each); not refitted here.
+# rho_0 is taken per slip system (the paper does not say whether it is per system or total).
+# On a 10x10x10 spectral grid with one grain per cell (random texture, 1e-3/s), these values give a flow
+# stress about 70 MPa below the paper's CPFE curve between 0.6 and 1.5 % strain; refit g_0_sl for grid use.
+# Elasticity of that table (phase:mechanical:elastic, type Hooke): C_11 = 259.6e9, C_12 = 179.0e9,
+# C_44 = 109.6e9 Pa. mu is given explicitly as in the paper: mu = sqrt(C_44 (C_11 - C_12)/2) = 66.46 GPa.
+references:
+  - M.A. Charpagne et al.,
+    Acta Materialia 215:117037, 2021,
+    https://doi.org/10.1016/j.actamat.2021.117037,
+    Eqs. (4)-(6) and Table 1
+  - J.M. Hestroffer et al.,
+    Journal of the Mechanics and Physics of Solids 196:106023, 2025,
+    https://doi.org/10.1016/j.jmps.2024.106023,
+    Eqs. (4), (5), (7) (Eq. (6): mu from the elastic constants)
+
+output: [rho_sl, g_sl, gamma_sl]
+
+N_sl: [12]
+
+dot_gamma_0_sl: [1.0e-3]   # 1/s
+n_sl: [20]                 # 1
+g_0_sl: [400.0e+6]         # Pa
+b_sl: [0.257e-9]           # m
+rho_0: [1.5e+12]           # 1/m², per slip system
+K: [10]                    # 1
+y_c: [2.57e-9]             # m
+chi: 1.0                   # 1
+mu: 66.4596e+9             # Pa
+h_sl-sl: [0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1]   # a_ab = 0.1 for all pairs (1)
+
+atol_rho: 1.0              # 1/m²

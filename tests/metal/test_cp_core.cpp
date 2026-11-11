@@ -257,6 +257,62 @@ static bool dt_ref(const DT& m, const double* F, const double* Fp0, const double
 
 
 //--------------------------------------------------------------------------------------------------
+// kocksmecking reference (phase_mechanical_plastic_kocksmecking.f90), X = [rho, gamma]; g from the state
+struct KM { cp_km_param p; double chi = 1.0, mu = 1.0; };
+static void km_g(const KM& m, const double* X, double* g, double* sf) {
+  for (int i = 0; i < N; ++i) {
+    double a = 0; for (int j = 0; j < N; ++j) a += dv(m.p.h_sl_sl[i+N*j])*X[j];
+    sf[i] = std::sqrt(a);
+    g[i] = dv(m.p.g_0[i]) + m.chi*m.mu*dv(m.p.b[i])*sf[i];
+  }
+}
+static void km_kin(const KM& m, const double* X, const double* Mp, double* gd, double* dgd, bool* pos) {
+  double g[N], sf[N]; km_g(m, X, g, sf);
+  for (int i = 0; i < N; ++i) {
+    double tp = 0, tn = 0;
+    for (int k = 0; k < 9; ++k) { tp += Mp[k]*dv(m.p.P_nS_pos[9*i+k]); tn += Mp[k]*dv(m.p.P_nS_neg[9*i+k]); }
+    pos[i] = tp > tn; double tm = std::max(tp, tn);
+    gd[i] = tm > 0 ? (pos[i] ? 1 : -1) * dv(m.p.dot_gamma_0[i]) * std::pow(tm/g[i], dv(m.p.n[i])) : 0.0;
+    dgd[i] = gd[i] != 0 ? gd[i]*dv(m.p.n[i])/tm : 0;
+  }
+}
+static void km_dot(const KM& m, const double* X, const double* S6, double* d) {
+  double Mp[9] = {S6[0],S6[5],S6[4], S6[5],S6[1],S6[3], S6[4],S6[3],S6[2]}, gd[N], dgd[N], g[N], sf[N]; bool pos[N];
+  km_kin(m, X, Mp, gd, dgd, pos); km_g(m, X, g, sf);
+  for (int i = 0; i < N; ++i) {
+    d[N+i] = std::fabs(gd[i]);
+    d[i] = (sf[i]/dv(m.p.K[i]) - 2.0*dv(m.p.y_c[i])*X[i]) * d[N+i] / dv(m.p.b[i]);
+  }
+}
+// integrateStateFPI with DAMASK's damper
+static bool km_ref(const KM& m, const double* F, const double* Fp0, const double* S0, const double* st0, double dt,
+                   double* Lp, double* st, double* S6, double* P, double* Fp, double* Fe, double* iFpu) {
+  const int ND = 2*N;
+  double dot[2*N], l1[2*N], l2[2*N];
+  km_dot(m, st0, S0, dot);
+  for (int j = 0; j < ND; ++j) { st[j] = st0[j] + dot[j]*dt; l1[j] = 0; }
+  for (int it = 0; it < 20; ++it) {
+    for (int j = 0; j < ND; ++j) { l2[j] = it > 0 ? l1[j] : 0; l1[j] = dot[j]; }
+    Kin kin = [&](const double* Mp, double* gd, double* dgd, bool* pos) { km_kin(m, st, Mp, gd, dgd, pos); };
+    if (!ref_stress(m.p, kin, F, Fp0, dt, Lp, S6, P, Fp, Fe, iFpu)) return false;
+    km_dot(m, st, S6, dot);
+    double d01=0,d12=0,d22=0;
+    for (int j = 0; j < ND; ++j) { d01 += dot[j]*l1[j]; d12 += (dot[j]-l1[j])*(l1[j]-l2[j]); d22 += (l1[j]-l2[j])*(l1[j]-l2[j]); }
+    double z = (std::min(d01,d12) < 0 && d22 > 0) ? 0.75+0.25*std::tanh(2+4*d12/d22) : 1;
+    bool conv = true;
+    for (int j = 0; j < ND; ++j) {
+      dot[j] = dot[j]*z + l1[j]*(1-z);
+      double r = st[j]-st0[j]-dot[j]*dt; st[j] -= r;
+      double at = j < N ? 1.0 : 1e-6;
+      conv = conv && std::fabs(r) <= std::max(at, 1e-6*std::fabs(st[j]));
+    }
+    if (conv) return true;
+  }
+  return false;
+}
+
+
+//--------------------------------------------------------------------------------------------------
 // phenopowerlaw with twins reference (phase_mechanical_plastic_phenopowerlaw.f90): systems [slip(ns), twin(nt)],
 // state [xi_sl, xi_tw, gamma_sl, gamma_tw]. Real Mg geometry from damask-python (data/Mg_geometry.txt).
 static const int NT_MAX = 48;
@@ -911,6 +967,72 @@ int main() {
     std::printf("7. tdt (Mg 18 slip, 6 twins): dLp/dS vs FD %.2e, K vs G %.2e, Reuss C %.2e; c-axis cycle: %d incs (%.1f its/inc), "
                 "sum f %.3f after tension (S_zz %.0f MPa), %.3f after reversal, min f %.1e  %s\n",
                 eG, eK, eC, n, n ? double(its_tot)/n : 0.0, f_max, sz_tw/1e6, f_end, f_min, ok ? "OK" : "FAIL");
+  }
+
+  //------------------------------------------------------------------------------------------------
+  // 8. kocksmecking: core vs DAMASK port (aged IN718 parameters of Charpagne et al. 2021, Table 1)
+  {
+    KM m; std::memset(&m.p, 0, sizeof(m.p));
+    geometry(m.p, 259.6e9, 179e9, 109.6e9);
+    m.chi = 1.0; m.mu = std::sqrt(109.6e9*(259.6e9-179e9)/2.0);
+    for (int i = 0; i < N; ++i) {
+      m.p.dot_gamma_0[i] = pr(1e-3); m.p.n[i] = pr(20); m.p.g_0[i] = pr(400e6); m.p.b[i] = pr(0.257e-9);
+      m.p.K[i] = pr(10); m.p.y_c[i] = pr(2.57e-9);
+      for (int j = 0; j < N; ++j) m.p.h_sl_sl[i+N*j] = pr(0.1);
+    }
+    m.p.chi_mu = pr(m.chi*m.mu); m.p.atol_xi = 1.0f; m.p.atol_gamma = 1e-6f; m.p.N_sl = N;
+    typedef cp_model_km<N> Mo; typedef cp_layout<Mo> L;
+    double eP = 0, eX = 0, eT = 0, rho_max = 0; int n = 0, mism = 0, n_tan = 0, plastic = 0;
+    const double dt = 1.0;
+    for (int gr = 0; gr < 30; ++gr) {
+      double R[9]; rot(R);
+      double Fdot[9] = {1e-4, 0, 0, 0, -0.5e-4, 0, 0, 0, -0.5e-4}; for (double& x : Fdot) x += 2e-5*u(g);  // 1e-4 per step, to ~1.5 %
+      std::vector<double> st(2*N, 0.0); for (int i = 0; i < N; ++i) st[i] = 1.5e12;
+      double Fp[9], S6[6] = {0}, Lp[9] = {0}; std::memcpy(Fp, R, sizeof(Fp));
+      double Fr[9], Lpr[9] = {0}, S6r[6] = {0}; std::memcpy(Fr, R, sizeof(Fr));
+      std::vector<double> str = st;
+      for (int inc = 0; inc < 150; ++inc) {
+        double F[9]; for (int k = 0; k < 9; ++k) F[k] = (k%4==0) + Fdot[k]*dt*(inc+1);
+        double Pr[9], Fpr[9], Fer[9], iFr[9]; std::vector<double> st_new(2*N);
+        if (!km_ref(m, F, Fr, S6r, str.data(), dt, Lpr, st_new.data(), S6r, Pr, Fpr, Fer, iFr)) {
+          std::printf("   kocksmecking reference failed g%d i%d\n", gr, inc); break; }
+        std::vector<double> ib(L::n_in, 0.0), ob(L::n_out, 0.0);
+        for (int k = 0; k < 9; ++k) { ib[L::F+k] = F[k]; ib[L::Fp0+k] = Fp[k]; ib[L::Lp0+k] = Lp[k]; }
+        for (int k = 0; k < 6; ++k) ib[L::S0+k] = S6[k];
+        for (int j = 0; j < 2*N; ++j) ib[L::X0+j] = st[j];
+        int its; int sb = cp_core_integrate<double,Mo>(m.p, num, dt, {ib.data(),1,0}, {ob.data(),1,0}, its);
+        if (sb != CP_OK) { ++mism; std::printf("   kocksmecking core status %d g%d i%d\n", sb, gr, inc); break; }
+        eP = std::max(eP, rel(&ob[L::P], Pr, 9)); eX = std::max(eX, rel(&ob[L::X], st_new.data(), 2*N));
+        plastic += st_new[N] > 1e-6;
+        for (int i = 0; i < N; ++i) rho_max = std::max(rho_max, st_new[i]);
+        ++n;
+        if (inc % 15 == 14) {                                                                       // tangent vs FD, state fixed
+          double tan_d[81], fd[81]; const double h = 1e-7;
+          Kin kin = [&](const double* Mp, double* gd, double* dgd, bool* pos) { km_kin(m, st_new.data(), Mp, gd, dgd, pos); };
+          double Lq[9], Sq[6], Pq[9], Fpq[9], Feq[9], iFq[9];
+          std::memcpy(Lq, Lpr, sizeof(Lq));
+          bool ok = ref_stress(m.p, kin, F, Fr, dt, Lq, Sq, Pq, Fpq, Feq, iFq)
+                 && cp_core_tangent<double,Mo>(m.p, dt, F, Fr, iFq, Feq, Sq, st_new.data(), nullptr, nullptr, 0.0, tan_d);
+          for (int c = 0; c < 9 && ok; ++c) {
+            double Fa[9], Fb[9], La[9], Lb[9], Sa[6], Sb[6], Pa[9], Pb[9], X1[9], X2[9], X3[9];
+            std::memcpy(Fa, F, 72); std::memcpy(Fb, F, 72); Fa[c] += h; Fb[c] -= h;
+            std::memcpy(La, Lq, 72); std::memcpy(Lb, Lq, 72);
+            ok = ref_stress(m.p, kin, Fa, Fr, dt, La, Sa, Pa, X1, X2, X3) && ref_stress(m.p, kin, Fb, Fr, dt, Lb, Sb, Pb, X1, X2, X3);
+            for (int q = 0; q < 9; ++q) fd[q + 9*c] = (Pa[q]-Pb[q])/(2*h);
+          }
+          if (ok) { eT = std::max(eT, rel(tan_d, fd, 81)); ++n_tan; }
+        }
+        { double iF[9]; std::memcpy(iF, &ob[L::iFp], sizeof(iF)); double dd = cp_inv33<double>(iF, Fp); double sc = std::cbrt(1.0/dd); for (double& x : Fp) x /= sc; }
+        std::memcpy(S6, &ob[L::S], sizeof(S6)); std::memcpy(Lp, &ob[L::Lp], sizeof(Lp));
+        for (int j = 0; j < 2*N; ++j) st[j] = ob[L::X+j];
+        std::memcpy(Fr, Fpr, sizeof(Fr)); str = st_new;
+      }
+    }
+    bool ok = mism == 0 && n == 4500 && plastic > 0 && rho_max > 3e12 && eP < 1e-6 && eX < 1e-6 && n_tan > 0 && eT < 1e-5;
+    fails += !ok;
+    std::printf("8. kocksmecking core vs DAMASK port: %d steps (%d plastic, max rho %.2e /m^2), status failures %d\n"
+                "   max rel err P %.2e  state %.2e; tangent vs FD (%d) %.2e   %s\n",
+                n, plastic, rho_max, mism, eP, eX, n_tan, eT, ok ? "OK" : "FAIL");
   }
 
   return fails;
